@@ -7,6 +7,28 @@ from collections import defaultdict
 
 _render_nav = lambda: None
 
+
+def _check_acquired(bid_dict: dict, ing_stats: list[dict]) -> bool | None:
+    """Return True/False if acquisition status is known, None if unknown."""
+    raw = bid_dict.get("raw") or bid_dict
+    # Primary: explicit won/acquired/success flag in the row
+    for key in ("won", "acquired", "success"):
+        val = raw.get(key)
+        if val is not None:
+            return bool(val)
+    # Fallback: compare our bid price against min_price_paid from ingredient_bid_stats
+    our_bid = bid_dict.get("bid")
+    if our_bid is None:
+        return None
+    ingredient = bid_dict.get("ingredient") or ""
+    for s in ing_stats:
+        if (s.get("ingredient_name") or s.get("ingredient") or "").lower() == ingredient.lower():
+            min_paid = s.get("min_price_paid")
+            if min_paid is not None:
+                return float(our_bid) >= float(min_paid)
+    return None
+
+
 def build_bids_page(state: StateStore) -> None:
     @ui.page("/bids")
     async def bids():
@@ -26,10 +48,44 @@ def build_bids_page(state: StateStore) -> None:
             ).classes('w-64')
 
             @ui.refreshable
-            def render_bids(snap: dict, bids_override=None, stats_override=None):
+            def render_bids(snap: dict, bids_override=None, stats_override=None, my_restaurant_id: int | None = None):
                 bid_history = snap.get("ingredient_bid_history") or []
                 bids_data = bids_override if bids_override is not None else (snap.get("bids") or [])
                 ing_stats = stats_override if stats_override is not None else (snap.get("ingredient_bid_stats") or [])
+                my_id = my_restaurant_id
+                if my_id is None:
+                    my_rest = snap.get("my_restaurant") or {}
+                    my_id = my_rest.get("id")
+
+                # ── My Bids for this turn (with acquisition status) ──
+                my_bids = [b for b in bids_data if str(b.get("restaurant_id") or "") == str(my_id or "")]
+                ui.label("🏷️ My Bids (This Turn)").classes("text-lg font-bold")
+                if not my_bids:
+                    ui.label("No bids placed by your restaurant this turn.").classes("text-grey")
+                else:
+                    columns = [
+                        {"name": "ingredient", "label": "Ingredient", "field": "ingredient", "sortable": True},
+                        {"name": "bid", "label": "Our Bid", "field": "bid", "sortable": True},
+                        {"name": "quantity", "label": "Qty", "field": "quantity"},
+                        {"name": "acquired", "label": "Acquired?", "field": "acquired"},
+                    ]
+                    rows = []
+                    for b in my_bids:
+                        status = _check_acquired(b, ing_stats)
+                        if status is True:
+                            acquired_str = "✅ Yes"
+                        elif status is False:
+                            acquired_str = "❌ No"
+                        else:
+                            acquired_str = "❓ Unknown"
+                        rows.append({
+                            "_idx": str(id(b)),
+                            "ingredient": b.get("ingredient") or "Unknown",
+                            "bid": f"{b['bid']:.2f}" if b.get("bid") is not None else "N/A",
+                            "quantity": str(b.get("quantity") or ""),
+                            "acquired": acquired_str,
+                        })
+                    ui.table(columns=columns, rows=rows, row_key="_idx").classes("w-full")
 
                 # ── Cross-turn ingredient price trends ──
                 if bid_history:
@@ -158,7 +214,8 @@ def build_bids_page(state: StateStore) -> None:
                 sel = turn_select.value
 
                 if sel == 'current':
-                    render_bids.refresh(snap)
+                    my_id = (snap.get("my_restaurant") or {}).get("id")
+                    render_bids.refresh(snap, my_restaurant_id=my_id)
                 else:
                     selected_turn_id = int(sel)
                     # Fetch raw bids for the selected turn from DB
@@ -183,6 +240,7 @@ def build_bids_page(state: StateStore) -> None:
                                     "bid": float(bid_price) if bid_price is not None else None,
                                     "quantity": r.get("quantity"),
                                     "restaurant_id": r.get("restaurant_id"),
+                                    "raw": r,
                                 })
                     # Filter cross-turn stats to selected turn
                     turn_stats = [
@@ -196,7 +254,8 @@ def build_bids_page(state: StateStore) -> None:
                         for r in bid_history_all
                         if r.get("turn_id") == selected_turn_id
                     ]
-                    render_bids.refresh(snap, bids_data, turn_stats)
+                    my_id = (snap.get("my_restaurant") or {}).get("id")
+                    render_bids.refresh(snap, bids_data, turn_stats, my_restaurant_id=my_id)
 
             async def tick():
                 if turn_select.value == 'current':
