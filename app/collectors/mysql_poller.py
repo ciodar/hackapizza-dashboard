@@ -99,9 +99,18 @@ class MySQLPoller:
                 if turn_number > self._state.turn_number:
                     self._state.turn_number = turn_number
 
-    # ──────────────────────────────────────────────
-    # Poll loop
-    # ──────────────────────────────────────────────
+        # Seed last_heartbeat_ms from latest heartbeat event in DB
+        hb_row = await self._reader.try_fetch_rows(
+            "SELECT ts FROM sse_events WHERE event_type='heartbeat' ORDER BY id DESC LIMIT 1"
+        )
+        if hb_row:
+            ts = hb_row[0].get("ts")
+            if ts is not None:
+                import time as _time
+                ts_ms = int(ts.timestamp() * 1000) if hasattr(ts, "timestamp") else int(_time.time() * 1000)
+                async with self._state.lock:
+                    self._state.last_heartbeat_ms = ts_ms
+                    logger.info(f"MySQLPoller seeded last_heartbeat_ms from DB")
 
     async def _poll_once(self) -> None:
         self._poll_count += 1
@@ -110,6 +119,10 @@ class MySQLPoller:
         await self._check_heartbeat_timeout()
         if self._poll_count % BUSINESS_REFRESH_EVERY == 0:
             await self._refresh_business_snapshots()
+        # Any successful poll means MySQL is reachable
+        async with self._state.lock:
+            self._state.db_connected = True
+            self._state.last_db_error = None
 
     async def _process_sse_events(self) -> None:
         rows = await self._reader.fetch_new_sse_events(self._last_sse_id)
