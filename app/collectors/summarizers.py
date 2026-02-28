@@ -125,6 +125,8 @@ def summarize_market_entries(payload: Any) -> tuple[MarketSnapshot | None, dict[
             if side:
                 side = str(side).upper()
             ingredient = item.get("ingredient") or item.get("ingredient_name") or item.get("ingrediente")
+            if isinstance(ingredient, dict):
+                ingredient = ingredient.get("name") or ingredient.get("nome") or str(ingredient)
             quantity = _float(item.get("quantity") or item.get("qty") or item.get("quantita"))
             price = _float(item.get("price") or item.get("prezzo"))
             owner_id = _int(item.get("owner_id") or item.get("ownerId") or item.get("restaurant_id"))
