@@ -38,6 +38,13 @@ def build_overview_page(state: StateStore) -> None:
                     sse_ok = snap.get("sse_connected", False)
                     sse_color = "green" if sse_ok else ("orange" if snap.get("sse_blocked") else "red")
                     ui.badge(f"SSE: {'✓' if sse_ok else '✗'}", color=sse_color).classes("text-sm")
+
+                    turn_number = snap.get("turn_number", 0)
+                    turn_id = snap.get("turn_id")
+                    turn_label = f"Turn #{turn_number}"
+                    if turn_id is not None:
+                        turn_label += f"  (id {turn_id})"
+                    ui.badge(turn_label, color="purple" if turn_number else "grey").classes("text-sm")
                     
                     hb_age = snap.get("heartbeat_age_s")
                     if hb_age is not None:

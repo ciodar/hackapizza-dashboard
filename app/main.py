@@ -15,6 +15,8 @@ from app.collectors.poller import PollScheduler
 from app.alerts.engine import AlertEngine
 from app.storage.sqlite import SQLiteStore
 from app.storage.repository import Repository
+from app.storage.mysql_reader import MySQLReader
+from app.collectors.mysql_poller import MySQLPoller
 from app.models.common import GamePhase
 from app.ui.app_ui import build_ui
 
@@ -51,6 +53,22 @@ async def startup():
         db = SQLiteStore(config.sqlite_path)
         db.init_schema()
         repo = Repository(db)
+
+    if config.mysql_enabled:
+        mysql_reader = MySQLReader(
+            host=config.mysql_host,
+            port=config.mysql_port,
+            user=config.mysql_user,
+            password=config.mysql_password,
+            db=config.mysql_db,
+        )
+        try:
+            await mysql_reader.connect()
+            mysql_poller = MySQLPoller(state, mysql_reader, _runtime_config, config.mysql_poll_interval_s)
+            _tasks.append(asyncio.create_task(mysql_poller.run_forever(), name="mysql_poller"))
+            logger.info("MySQLPoller started — tailing main.py events from MySQL")
+        except Exception as exc:
+            logger.warning(f"Could not connect to MySQL, dashboard will work without live events: {exc}")
 
     specs = build_endpoint_registry()
     scheduler = PollScheduler(state, http_client, specs, config.max_concurrency)

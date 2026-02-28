@@ -24,6 +24,10 @@ class StateStore:
     sse_blocked: bool = False
     last_sse_error: str | None = None
 
+    # turn tracking (populated by MySQLPoller from main.py's MySQL writes)
+    turn_number: int = 0
+    turn_id: int | None = None
+
     # endpoint health
     endpoint_status: dict[str, EndpointStatus] = field(default_factory=dict)
     endpoint_checks: dict[str, deque] = field(default_factory=dict)
@@ -146,6 +150,8 @@ class StateStore:
 
             return {
                 "phase": self.phase.value,
+                "turn_number": self.turn_number,
+                "turn_id": self.turn_id,
                 "sse_connected": self.sse_connected,
                 "sse_blocked": self.sse_blocked,
                 "last_sse_error": self.last_sse_error,
