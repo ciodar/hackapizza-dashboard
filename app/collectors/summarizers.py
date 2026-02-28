@@ -168,6 +168,8 @@ def summarize_bid_history(payload: Any, turn_id: int) -> tuple[BidHistorySnapsho
             if not isinstance(item, dict):
                 continue
             ingredient = item.get("ingredient") or item.get("ingrediente")
+            if isinstance(ingredient, dict):
+                ingredient = ingredient.get("name") or ingredient.get("nome") or str(ingredient)
             bid = _float(item.get("bid") or item.get("offer") or item.get("offerta"))
             quantity = _float(item.get("quantity") or item.get("qty") or item.get("quantita"))
             restaurant_id = _int(item.get("restaurant_id") or item.get("restaurantId"))
