@@ -9,6 +9,13 @@ from app.models.bids import BidHistorySnapshot, BidRow
 def _ts() -> int:
     return int(time.time() * 1000)
 
+def _first(d: dict, *keys: str) -> Any:
+    """Return the first value from d whose key exists and whose value is not None."""
+    for k in keys:
+        if k in d and d[k] is not None:
+            return d[k]
+    return None
+
 def _float(v: Any) -> float | None:
     if v is None:
         return None
@@ -44,11 +51,11 @@ def summarize_restaurants(payload: Any) -> tuple[RestaurantsOverview | None, dic
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            rid = _int(item.get("id") or item.get("restaurantId") or item.get("restaurant_id"))
-            name = item.get("name") or item.get("restaurantName") or item.get("restaurant_name")
-            balance = _float(item.get("balance") or item.get("money") or item.get("saldo"))
-            reputation = _float(item.get("reputation") or item.get("reputazione"))
-            is_open = _bool(item.get("is_open") or item.get("isOpen") or item.get("open"))
+            rid = _int(_first(item, "id", "restaurantId", "restaurant_id"))
+            name = _first(item, "name", "restaurantName", "restaurant_name")
+            balance = _float(_first(item, "balance", "money", "saldo"))
+            reputation = _float(_first(item, "reputation", "reputazione"))
+            is_open = _bool(_first(item, "is_open", "isOpen", "open"))
             rows.append(RestaurantRow(restaurant_id=rid, name=name, balance=balance, reputation=reputation, is_open=is_open, raw=item))
         ov = RestaurantsOverview(ts_ms=_ts(), restaurants=rows)
         balances = [r.balance for r in rows if r.balance is not None]
@@ -61,11 +68,18 @@ def summarize_restaurant_detail(payload: Any, restaurant_id: int) -> tuple[Resta
     try:
         if not isinstance(payload, dict):
             return None, {"parse_ok": False, "error": "expected dict"}
-        balance = _float(payload.get("balance") or payload.get("money") or payload.get("saldo"))
-        reputation = _float(payload.get("reputation") or payload.get("reputazione"))
-        is_open = _bool(payload.get("is_open") or payload.get("isOpen") or payload.get("open"))
+        balance = _float(_first(payload, "balance", "money", "saldo"))
+        reputation = _float(_first(payload, "reputation", "reputazione"))
+        is_open = _bool(_first(payload, "is_open", "isOpen", "open"))
         
-        raw_inv = payload.get("inventory") or payload.get("inventario") or payload.get("ingredients") or {}
+        raw_inv = _first(payload, "inventory", "inventario", "ingredients") or {}
+        # Parse JSON string if the DB column stores inventory as JSON text
+        if isinstance(raw_inv, str):
+            import json as _json
+            try:
+                raw_inv = _json.loads(raw_inv)
+            except Exception:
+                raw_inv = {}
         inventory: dict[str, float] = {}
         if isinstance(raw_inv, dict):
             for k, v in raw_inv.items():
@@ -97,8 +111,8 @@ def summarize_menu(payload: Any, restaurant_id: int) -> tuple[MenuSnapshot | Non
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            name = item.get("name") or item.get("dish") or item.get("piatto") or item.get("nome")
-            price = _float(item.get("price") or item.get("prezzo") or item.get("costo"))
+            name = _first(item, "name", "dish", "piatto", "nome")
+            price = _float(_first(item, "price", "prezzo", "costo"))
             items.append(MenuItem(name=name, price=price, raw=item))
         snap = MenuSnapshot(ts_ms=_ts(), restaurant_id=restaurant_id, items=items)
         prices = [i.price for i in items if i.price is not None]
@@ -120,16 +134,16 @@ def summarize_market_entries(payload: Any) -> tuple[MarketSnapshot | None, dict[
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            entry_id = _int(item.get("id") or item.get("entry_id") or item.get("entryId"))
-            side = item.get("side") or item.get("type") or item.get("tipo")
+            entry_id = _int(_first(item, "id", "entry_id", "entryId"))
+            side = _first(item, "side", "type", "tipo")
             if side:
                 side = str(side).upper()
-            ingredient = item.get("ingredient") or item.get("ingredient_name") or item.get("ingrediente")
+            ingredient = _first(item, "ingredient", "ingredient_name", "ingrediente")
             if isinstance(ingredient, dict):
                 ingredient = ingredient.get("name") or ingredient.get("nome") or str(ingredient)
-            quantity = _float(item.get("quantity") or item.get("qty") or item.get("quantita"))
-            price = _float(item.get("price") or item.get("prezzo"))
-            owner_id = _int(item.get("owner_id") or item.get("ownerId") or item.get("restaurant_id"))
+            quantity = _float(_first(item, "quantity", "qty", "quantita"))
+            price = _float(_first(item, "price", "prezzo"))
+            owner_id = _int(_first(item, "owner_id", "ownerId", "restaurant_id"))
             entries.append(MarketEntry(entry_id=entry_id, side=side, ingredient=ingredient, quantity=quantity, price=price, owner_id=owner_id, raw=item))
         snap = MarketSnapshot(ts_ms=_ts(), entries=entries)
         buy_count = sum(1 for e in entries if e.side == "BUY")
@@ -146,10 +160,10 @@ def summarize_meals(payload: Any, turn_id: int, restaurant_id: int) -> tuple[Mea
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            client_id = str(item.get("client_id") or item.get("clientId") or item.get("id") or "")
-            client_name = item.get("client_name") or item.get("clientName") or item.get("name") or item.get("nome")
-            order_text = item.get("order") or item.get("orderText") or item.get("order_text") or item.get("richiesta")
-            executed = _bool(item.get("executed") or item.get("served") or item.get("servito"))
+            client_id = str(_first(item, "client_id", "clientId", "id") or "")
+            client_name = _first(item, "client_name", "clientName", "name", "nome")
+            order_text = _first(item, "order", "orderText", "order_text", "richiesta")
+            executed = _bool(_first(item, "executed", "served", "servito"))
             meals.append(MealRequest(client_id=client_id, client_name=client_name, order_text=order_text, executed=executed, raw=item))
         snap = MealsSnapshot(ts_ms=_ts(), turn_id=turn_id, restaurant_id=restaurant_id, meals=meals)
         total = len(meals)
@@ -167,12 +181,12 @@ def summarize_bid_history(payload: Any, turn_id: int) -> tuple[BidHistorySnapsho
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            ingredient = item.get("ingredient") or item.get("ingrediente")
+            ingredient = _first(item, "ingredient", "ingrediente")
             if isinstance(ingredient, dict):
                 ingredient = ingredient.get("name") or ingredient.get("nome") or str(ingredient)
-            bid = _float(item.get("bid") or item.get("offer") or item.get("offerta"))
-            quantity = _float(item.get("quantity") or item.get("qty") or item.get("quantita"))
-            restaurant_id = _int(item.get("restaurant_id") or item.get("restaurantId"))
+            bid = _float(_first(item, "bid", "offer", "offerta"))
+            quantity = _float(_first(item, "quantity", "qty", "quantita"))
+            restaurant_id = _int(_first(item, "restaurant_id", "restaurantId"))
             bids.append(BidRow(ingredient=ingredient, bid=bid, quantity=quantity, restaurant_id=restaurant_id, raw=item))
         snap = BidHistorySnapshot(ts_ms=_ts(), turn_id=turn_id, bids=bids)
         return snap, {"parse_ok": True, "count": len(bids)}
