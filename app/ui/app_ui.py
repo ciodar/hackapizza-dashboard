@@ -1,7 +1,7 @@
 from nicegui import ui
 from app.core.state import StateStore
 from app.alerts.engine import AlertEngine
-from app.ui.pages import overview, restaurant, serving, market, bids, events, decisions, recipes, agent, blog
+from app.ui.pages import overview, restaurant, serving, market, bids, events, decisions, recipes, agent, blog, strategy
 
 NAV_ITEMS = [
     ("/", "🏠 Overview"),
@@ -10,6 +10,7 @@ NAV_ITEMS = [
     ("/market", "🛒 Market"),
     ("/bids", "📊 Bids"),
     ("/recipes", "📖 Recipes"),
+    ("/strategy", "🧭 Strategy"),
     ("/decisions", "🧠 Decisions"),
     ("/events", "📡 Events"),
     ("/agent", "🤖 Agent Prompts"),
@@ -34,6 +35,8 @@ import app.ui.pages.recipes as _rec
 import app.ui.pages.agent as _agt
 import app.ui.pages.blog as _blog
 
+import app.ui.pages.strategy as _strat
+
 _ov._render_nav = _render_nav
 _rest._render_nav = _render_nav
 _srv._render_nav = _render_nav
@@ -44,6 +47,7 @@ _dec._render_nav = _render_nav
 _rec._render_nav = _render_nav
 _agt._render_nav = _render_nav
 _blog._render_nav = _render_nav
+_strat._render_nav = _render_nav
 
 def build_ui(state: StateStore, alert_engine: AlertEngine) -> None:
     overview.build_overview_page(state)
@@ -56,3 +60,4 @@ def build_ui(state: StateStore, alert_engine: AlertEngine) -> None:
     recipes.build_recipes_page(state)
     agent.build_agent_page(state)
     blog.build_blog_page(state)
+    strategy.build_strategy_page(state)
