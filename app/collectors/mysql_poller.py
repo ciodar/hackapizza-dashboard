@@ -314,10 +314,22 @@ class MySQLPoller:
 
     async def _refresh_menu(self, turn_number: int | None = None) -> None:
         restaurant_id = self._runtime_config.get("restaurant_id", 1)
-        # Try decisions table (menu_plan decision contains the chosen menu)
-        decisions = await self._reader.fetch_decisions(
-            decision_type="menu_plan", turn_number=turn_number, limit=1
-        )
+        # Try decisions table: menu_plan or menu_post_bid for current turn,
+        # then fall back to most recent menu decision from any turn.
+        decisions = None
+        for dtype in ("menu_post_bid", "menu_plan"):
+            decisions = await self._reader.fetch_decisions(
+                decision_type=dtype, turn_number=turn_number, limit=1
+            )
+            if decisions:
+                break
+        if not decisions and turn_number:
+            for dtype in ("menu_post_bid", "menu_plan"):
+                decisions = await self._reader.fetch_decisions(
+                    decision_type=dtype, turn_number=None, limit=1
+                )
+                if decisions:
+                    break
         if decisions:
             data = decisions[0].get("data_json") or {}
             # menu decision data_json has items list: [{name, price}, ...]
