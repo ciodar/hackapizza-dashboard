@@ -5,7 +5,6 @@ from collections import deque
 from typing import Any
 
 from app.models.common import GamePhase
-from app.models.endpoint import EndpointStatus, EndpointCheck
 from app.models.sse import SSEEvent
 from app.models.restaurant import RestaurantsOverview, RestaurantDetail, MenuSnapshot
 from app.models.market import MarketSnapshot
@@ -17,22 +16,17 @@ from app.models.alerts import AlertInstance
 class StateStore:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    # connectivity / meta
+    # connectivity / meta (driven by MySQL heartbeat events)
     phase: GamePhase = GamePhase.UNKNOWN
     last_heartbeat_ms: int | None = None
-    sse_connected: bool = False
-    sse_blocked: bool = False
-    last_sse_error: str | None = None
+    db_connected: bool = False
+    last_db_error: str | None = None
 
     # turn tracking (populated by MySQLPoller from main.py's MySQL writes)
     turn_number: int = 0
     turn_id: int | None = None
 
-    # endpoint health
-    endpoint_status: dict[str, EndpointStatus] = field(default_factory=dict)
-    endpoint_checks: dict[str, deque] = field(default_factory=dict)
-
-    # latest business snapshots
+    # latest business snapshots (all sourced from DB)
     restaurants_overview: RestaurantsOverview | None = None
     my_restaurant: RestaurantDetail | None = None
     my_menu: MenuSnapshot | None = None
@@ -46,8 +40,12 @@ class StateStore:
     mcp_calls_recent: list[dict] = field(default_factory=list)
     recipe_stats_current: list[dict] = field(default_factory=list)
     ingredient_bid_stats_current: list[dict] = field(default_factory=list)
+    snapshots_history: list[dict] = field(default_factory=list)  # per-turn restaurant snapshots
+    agent_prompts_recent: list[dict] = field(default_factory=list)
+    ingredient_bid_history: list[dict] = field(default_factory=list)  # cross-turn bid price trends
+    phase_transitions_recent: list[dict] = field(default_factory=list)
 
-    # live events
+    # live events (replayed from sse_events table)
     events: deque = field(default_factory=lambda: deque(maxlen=2000))
 
     # derived outputs
@@ -117,23 +115,6 @@ class StateStore:
                         "restaurant_id": b.restaurant_id,
                     })
 
-            endpoint_statuses = {}
-            for name, status in self.endpoint_status.items():
-                endpoint_statuses[name] = {
-                    "name": status.name,
-                    "severity": status.severity.value,
-                    "last_check": {
-                        "ok": status.last_check.ok,
-                        "status_code": status.last_check.status_code,
-                        "latency_ms": status.last_check.latency_ms,
-                        "error": status.last_check.error,
-                        "ts_ms": status.last_check.ts_ms,
-                    } if status.last_check else None,
-                    "stats_1m": status.stats_1m,
-                    "stats_5m": status.stats_5m,
-                    "last_ok_ts_ms": status.last_ok_ts_ms,
-                }
-
             recent_events = []
             for ev in list(self.events)[-100:]:
                 recent_events.append({
@@ -158,9 +139,8 @@ class StateStore:
                 "phase": self.phase.value,
                 "turn_number": self.turn_number,
                 "turn_id": self.turn_id,
-                "sse_connected": self.sse_connected,
-                "sse_blocked": self.sse_blocked,
-                "last_sse_error": self.last_sse_error,
+                "db_connected": self.db_connected,
+                "last_db_error": self.last_db_error,
                 "heartbeat_age_s": hb_age,
                 "restaurants": restaurants,
                 "my_restaurant": my,
@@ -168,7 +148,6 @@ class StateStore:
                 "market_entries": market_entries,
                 "meals": meals,
                 "bids": bids,
-                "endpoint_statuses": endpoint_statuses,
                 "recent_events": recent_events,
                 "active_alerts": alerts,
                 "recipes_count": len(self.recipes_cache),
@@ -177,4 +156,8 @@ class StateStore:
                 "mcp_calls_recent": list(self.mcp_calls_recent),
                 "recipe_stats": list(self.recipe_stats_current),
                 "ingredient_bid_stats": list(self.ingredient_bid_stats_current),
+                "snapshots_history": list(self.snapshots_history),
+                "agent_prompts": list(self.agent_prompts_recent),
+                "ingredient_bid_history": list(self.ingredient_bid_history),
+                "phase_transitions_recent": list(self.phase_transitions_recent),
             }

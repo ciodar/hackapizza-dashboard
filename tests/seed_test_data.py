@@ -569,6 +569,57 @@ async def seed_all(pool: aiomysql.Pool, clear: bool = False) -> None:
                         (cname, cid),
                     )
 
+                # ── Agent prompts ────────────────────────────────────────────────
+                menu_system = (
+                    "You are the menu planning agent for a restaurant in a competitive cooking game. "
+                    "Your goal is to select the optimal menu of 4-6 dishes that maximizes revenue "
+                    "given current inventory, market prices, and expected customer demand. "
+                    "Return a JSON object with 'items' (list of {name, price}) and 'reasoning'."
+                )
+                menu_input = (
+                    f"Turn {turn_num}. Available recipes: {[r['name'] for r in RECIPES]}. "
+                    f"Inventory: Farina di Grano Antico x{8+turn_num}, Tartufo Nero x2, "
+                    f"Mozzarella di Bufala x5. Balance: {balance:.0f}cr. "
+                    f"Last turn served 8/10 clients. What menu should we offer?"
+                )
+                menu_output = {
+                    "items": menu_items,
+                    "reasoning": "Volume-focused menu covering all main ingredients. "
+                                 "Pizza al Tartufo Nero is high prestige and high margin. "
+                                 "Focaccia is quick to prepare as fallback.",
+                }
+
+                bid_system = (
+                    "You are the bidding agent for a restaurant. Analyze ingredient requirements "
+                    "for the planned menu and submit bids in the closed auction. "
+                    "Return JSON with 'bids' list ({ingredient, quantity, bid}) and 'reasoning'."
+                )
+                bid_input = (
+                    f"Turn {turn_num}. Planned menu: {[i['name'] for i in menu_items]}. "
+                    f"Deficit analysis: Farina -2, Pomodoro -1, Mozzarella -1. "
+                    f"Last auction clearing prices: Farina ~10cr, Pomodoro ~7cr. "
+                    f"Budget cap: {balance*0.3:.0f}cr. What should we bid?"
+                )
+                bid_output = bid_decision
+
+                agent_prompt_rows = [
+                    (
+                        (now + timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+                        "menu_agent", menu_system, menu_input,
+                        json.dumps(menu_output), "speaking", turn_num,
+                    ),
+                    (
+                        (now + timedelta(minutes=7)).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+                        "bid_agent", bid_system, bid_input,
+                        json.dumps(bid_output), "closed_bid", turn_num,
+                    ),
+                ]
+                await cur.executemany(
+                    "INSERT INTO agent_prompts (ts, agent_name, system_prompt, input_prompt, output_json, phase, turn_number) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    agent_prompt_rows,
+                )
+
                 print(f"    Turn {turn_num} done.")
 
     print("✅ Seed complete.")

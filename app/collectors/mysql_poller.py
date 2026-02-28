@@ -63,8 +63,8 @@ class MySQLPoller:
             except Exception as exc:
                 logger.warning(f"MySQLPoller poll error: {exc}")
                 async with self._state.lock:
-                    self._state.sse_connected = False
-                    self._state.last_sse_error = f"MySQL unavailable: {exc}"
+                    self._state.db_connected = False
+                    self._state.last_db_error = f"MySQL unavailable: {exc}"
             await asyncio.sleep(self._poll_interval_s)
 
     # ──────────────────────────────────────────────
@@ -134,8 +134,8 @@ class MySQLPoller:
 
                 if etype == "heartbeat":
                     self._state.last_heartbeat_ms = ts_ms
-                    self._state.sse_connected = True
-                    self._state.last_sse_error = None
+                    self._state.db_connected = True
+                    self._state.last_db_error = None
 
                 elif etype == "game_started":
                     data = row["event_json"] or {}
@@ -176,9 +176,9 @@ class MySQLPoller:
         async with self._state.lock:
             if self._state.last_heartbeat_ms:
                 age_s = (int(time.time() * 1000) - self._state.last_heartbeat_ms) / 1000.0
-                if age_s > HEARTBEAT_TIMEOUT_S and self._state.sse_connected:
-                    self._state.sse_connected = False
-                    logger.warning(f"No heartbeat for {age_s:.0f}s — marking SSE disconnected")
+                if age_s > HEARTBEAT_TIMEOUT_S and self._state.db_connected:
+                    self._state.db_connected = False
+                    logger.warning(f"No heartbeat for {age_s:.0f}s — marking DB disconnected")
 
     # ──────────────────────────────────────────────
     # Business data refresh from DB tables
@@ -201,6 +201,10 @@ class MySQLPoller:
         await self._refresh_decisions(turn_number)
         await self._refresh_mcp_calls(turn_number)
         await self._refresh_recipes()
+        await self._refresh_snapshots_history()
+        await self._refresh_agent_prompts()
+        await self._refresh_ingredient_bid_history()
+        await self._refresh_phase_transitions()
 
     async def _refresh_meals(self, turn_number: int, turn_id: int | None, restaurant_id: int) -> None:
         if not turn_number:
@@ -354,8 +358,52 @@ class MySQLPoller:
             async with self._state.lock:
                 self._state.mcp_calls_recent = rows
 
+    async def _refresh_snapshots_history(self) -> None:
+        """Fetch per-turn restaurant snapshots for balance/reputation history."""
+        rows = await self._reader.fetch_snapshots("restaurant_post_bid", limit=30)
+        if not rows:
+            rows = await self._reader.fetch_snapshots("restaurant", limit=30)
+        if not rows:
+            rows = await self._reader.fetch_snapshots("turn_end", limit=30)
+        if rows:
+            history = []
+            seen_turns = set()
+            for row in reversed(rows):  # oldest first
+                turn = row.get("turn_number") or 0
+                if turn in seen_turns:
+                    continue
+                seen_turns.add(turn)
+                data = row.get("data_json") or {}
+                history.append({
+                    "turn_number": turn,
+                    "balance": data.get("balance"),
+                    "reputation": data.get("reputation"),
+                    "clients_served": data.get("clients_served"),
+                    "ts": row.get("ts"),
+                })
+            async with self._state.lock:
+                self._state.snapshots_history = history
+
     async def _refresh_recipes(self) -> None:
         rows = await self._reader.fetch_recipes_with_ingredients()
         if rows:
             async with self._state.lock:
                 self._state.recipes_cache = rows
+
+    async def _refresh_agent_prompts(self) -> None:
+        rows = await self._reader.fetch_agent_prompts(limit=50)
+        if rows is not None:
+            async with self._state.lock:
+                self._state.agent_prompts_recent = rows
+
+    async def _refresh_ingredient_bid_history(self) -> None:
+        rows = await self._reader.fetch_ingredient_bid_history(limit=300)
+        if rows is not None:
+            async with self._state.lock:
+                self._state.ingredient_bid_history = rows
+
+    async def _refresh_phase_transitions(self) -> None:
+        rows = await self._reader.fetch_phase_transitions_recent(limit=50)
+        if rows is not None:
+            async with self._state.lock:
+                self._state.phase_transitions_recent = rows

@@ -15,6 +15,37 @@ def build_bids_page(state: StateStore) -> None:
             
             @ui.refreshable
             def render_bids(snap: dict):
+                # ── Cross-turn ingredient price trends ──
+                bid_history = snap.get("ingredient_bid_history") or []
+                if bid_history:
+                    ui.label("📉 Ingredient Price Trends (All Turns)").classes("text-lg font-bold")
+                    # Group by ingredient
+                    from collections import defaultdict
+                    by_ingredient: dict[str, list[dict]] = defaultdict(list)
+                    for row in bid_history:
+                        by_ingredient[row.get("ingredient_name") or "?"].append(row)
+                    columns = [
+                        {"name": "ingredient", "label": "Ingredient", "field": "ingredient", "sortable": True},
+                        {"name": "turns", "label": "Turns", "field": "turns"},
+                        {"name": "min_ever", "label": "Min Ever", "field": "min_ever", "sortable": True},
+                        {"name": "avg_avg", "label": "Avg", "field": "avg_avg", "sortable": True},
+                        {"name": "max_ever", "label": "Max Ever", "field": "max_ever", "sortable": True},
+                    ]
+                    rows = []
+                    for ing, records in sorted(by_ingredient.items()):
+                        mins = [r["min_price_paid"] for r in records if r.get("min_price_paid") is not None]
+                        avgs = [r["avg_price_paid"] for r in records if r.get("avg_price_paid") is not None]
+                        maxs = [r["max_price_paid"] for r in records if r.get("max_price_paid") is not None]
+                        turn_ids = sorted({r.get("turn_id") for r in records if r.get("turn_id")})
+                        rows.append({
+                            "ingredient": ing,
+                            "turns": ", ".join(str(t) for t in turn_ids),
+                            "min_ever": f"{min(mins):.2f}" if mins else "—",
+                            "avg_avg": f"{sum(avgs)/len(avgs):.2f}" if avgs else "—",
+                            "max_ever": f"{max(maxs):.2f}" if maxs else "—",
+                        })
+                    ui.table(columns=columns, rows=rows, row_key="ingredient").classes("w-full")
+
                 # ── Ingredient bid stats from DB (all restaurants, per turn) ──
                 ing_stats = snap.get("ingredient_bid_stats") or []
                 if ing_stats:
@@ -80,14 +111,15 @@ def build_bids_page(state: StateStore) -> None:
                     ]
                     rows = [
                         {
+                            "_idx": str(i),
                             "ingredient": b.get("ingredient") or "Unknown",
                             "bid": f"{b['bid']:.2f}" if b.get("bid") is not None else "N/A",
                             "quantity": str(b.get("quantity") or ""),
                             "restaurant": str(b.get("restaurant_id") or ""),
                         }
-                        for b in bids_data
+                        for i, b in enumerate(bids_data)
                     ]
-                    ui.table(columns=columns, rows=rows, row_key="ingredient").classes("w-full")
+                    ui.table(columns=columns, rows=rows, row_key="_idx").classes("w-full")
             
             async def tick():
                 snap = await state.snapshot()

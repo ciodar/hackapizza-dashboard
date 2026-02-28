@@ -137,11 +137,51 @@ def build_decisions_page(state: StateStore) -> None:
                         else:
                             ui.code(json.dumps(data, indent=2)[:500]).classes("text-xs w-full")
 
-            filter_select.on("update:model-value", lambda e: render_decisions.refresh({}))
+            filter_select.on("update:model-value", lambda e: render_decisions.refresh(_last_snap[0], filter_select.value))
+
+            ui.separator()
+            ui.label("🔧 MCP Tool Calls Log").classes("text-xl font-bold mt-2")
+            mcp_filter = ui.input(placeholder="Filter by tool name...").classes("w-48")
+
+            @ui.refreshable
+            def render_mcp_calls(snap: dict, filter_text: str = ""):
+                calls = snap.get("mcp_calls_recent") or []
+                if filter_text:
+                    calls = [c for c in calls if filter_text.lower() in (c.get("tool_name") or "").lower()]
+                if not calls:
+                    ui.label("No MCP calls recorded yet.").classes("text-grey")
+                    return
+                columns = [
+                    {"name": "ts", "label": "Time", "field": "ts"},
+                    {"name": "tool", "label": "Tool", "field": "tool", "sortable": True},
+                    {"name": "turn", "label": "Turn", "field": "turn", "sortable": True},
+                    {"name": "latency", "label": "Latency ms", "field": "latency", "sortable": True},
+                    {"name": "status", "label": "Status", "field": "status"},
+                    {"name": "phase", "label": "Phase", "field": "phase"},
+                ]
+                rows = [
+                    {
+                        "ts": _fmt_ts(c.get("ts")),
+                        "tool": c.get("tool_name") or "?",
+                        "turn": str(c.get("turn_number") or "?"),
+                        "latency": f"{c['latency_ms']:.0f}" if c.get("latency_ms") is not None else "?",
+                        "status": "❌ Error" if c.get("is_error") else "✅ OK",
+                        "phase": c.get("phase") or "?",
+                    }
+                    for c in calls[:100]
+                ]
+                ui.table(columns=columns, rows=rows, row_key="ts").classes("w-full")
+
+            _last_snap: list[dict] = [{}]
 
             async def tick():
                 snap = await state.snapshot()
+                _last_snap[0] = snap
                 render_decisions.refresh(snap, filter_select.value)
+                render_mcp_calls.refresh(snap, mcp_filter.value)
 
+            mcp_filter.on("update:model-value", lambda e: render_mcp_calls.refresh(_last_snap[0], mcp_filter.value))
+
+            render_mcp_calls({})
             render_decisions({})
             ui.timer(3.0, tick)

@@ -309,6 +309,56 @@ class MySQLReader:
                 rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
+    async def fetch_agent_prompts(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Fetch recent agent_prompts rows, newest first."""
+        rows = await self.try_fetch_rows(
+            "SELECT id, ts, agent_name, system_prompt, input_prompt, output_json, phase, turn_number "
+            "FROM agent_prompts ORDER BY id DESC LIMIT %s",
+            (limit,),
+        )
+        if rows is None:
+            return []
+        result = []
+        for row in rows:
+            if isinstance(row.get("output_json"), str):
+                try:
+                    row["output_json"] = json.loads(row["output_json"])
+                except Exception:
+                    pass
+            result.append(row)
+        return result
+
+    async def fetch_ingredient_bid_history(self, limit: int = 300) -> list[dict[str, Any]]:
+        """Fetch ingredient_bid_stats across ALL turns (for cross-turn trend view)."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    """
+                    SELECT ibs.turn_id, i.name AS ingredient_name,
+                           ibs.avg_price_paid, ibs.min_price_paid, ibs.max_price_paid,
+                           ibs.total_quantity
+                    FROM ingredient_bid_stats ibs
+                    JOIN ingredients i ON i.id = ibs.ingredient_id
+                    ORDER BY ibs.turn_id ASC, i.name
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def fetch_phase_transitions_recent(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Fetch recent phase_transitions rows, newest first."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT id, ts, from_phase, to_phase, turn_number "
+                    "FROM phase_transitions ORDER BY id DESC LIMIT %s",
+                    (limit,),
+                )
+                rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
     async def fetch_ingredient_bid_stats(self, turn_id: int | None = None, limit: int = 100) -> list[dict[str, Any]]:
         """Fetch ingredient_bid_stats rows joined with ingredient name."""
         params: list[Any] = []
