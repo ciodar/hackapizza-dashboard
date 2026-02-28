@@ -2,7 +2,7 @@ from nicegui import ui
 from app.core.state import StateStore
 from app.alerts.engine import AlertEngine
 from app.clients.hackapizza_mcp import HackapizzaMcpClient
-from app.ui.pages import overview, endpoint_health, competition, serving, market, bids, events, actions
+from app.ui.pages import overview, endpoint_health, competition, serving, market, bids, events, actions, decisions, recipes
 
 NAV_ITEMS = [
     ("/", "🏠 Overview"),
@@ -11,6 +11,8 @@ NAV_ITEMS = [
     ("/serving", "🍽️ Serving"),
     ("/market", "🛒 Market"),
     ("/bids", "📊 Bids"),
+    ("/recipes", "📖 Recipes"),
+    ("/decisions", "🧠 Decisions"),
     ("/events", "📡 Events"),
     ("/actions", "⚡ Actions"),
 ]
@@ -30,6 +32,8 @@ import app.ui.pages.market as _mkt
 import app.ui.pages.bids as _bids
 import app.ui.pages.events as _ev
 import app.ui.pages.actions as _act
+import app.ui.pages.decisions as _dec
+import app.ui.pages.recipes as _rec
 
 _ov._render_nav = _render_nav
 _eh._render_nav = _render_nav
@@ -39,6 +43,8 @@ _mkt._render_nav = _render_nav
 _bids._render_nav = _render_nav
 _ev._render_nav = _render_nav
 _act._render_nav = _render_nav
+_dec._render_nav = _render_nav
+_rec._render_nav = _render_nav
 
 def build_ui(state: StateStore, alert_engine: AlertEngine, mcp: HackapizzaMcpClient | None) -> None:
     overview.build_overview_page(state)
@@ -49,3 +55,5 @@ def build_ui(state: StateStore, alert_engine: AlertEngine, mcp: HackapizzaMcpCli
     bids.build_bids_page(state)
     events.build_events_page(state)
     actions.build_actions_page(state, mcp)
+    decisions.build_decisions_page(state)
+    recipes.build_recipes_page(state)

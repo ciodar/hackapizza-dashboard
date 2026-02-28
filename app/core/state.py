@@ -41,6 +41,12 @@ class StateStore:
     bid_history: BidHistorySnapshot | None = None
     recipes_cache: list[dict] = field(default_factory=list)
 
+    # rich data from actual agent-written tables
+    decisions_recent: list[dict] = field(default_factory=list)
+    mcp_calls_recent: list[dict] = field(default_factory=list)
+    recipe_stats_current: list[dict] = field(default_factory=list)
+    ingredient_bid_stats_current: list[dict] = field(default_factory=list)
+
     # live events
     events: deque = field(default_factory=lambda: deque(maxlen=2000))
 
@@ -166,4 +172,9 @@ class StateStore:
                 "recent_events": recent_events,
                 "active_alerts": alerts,
                 "recipes_count": len(self.recipes_cache),
+                "recipes": self.recipes_cache,
+                "decisions_recent": list(self.decisions_recent),
+                "mcp_calls_recent": list(self.mcp_calls_recent),
+                "recipe_stats": list(self.recipe_stats_current),
+                "ingredient_bid_stats": list(self.ingredient_bid_stats_current),
             }
