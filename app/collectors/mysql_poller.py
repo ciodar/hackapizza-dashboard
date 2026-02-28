@@ -219,6 +219,7 @@ class MySQLPoller:
         await self._refresh_ingredient_bid_history()
         await self._refresh_phase_transitions()
         await self._refresh_restaurant_state_turns()
+        await self._refresh_blog_articles()
 
     async def _refresh_meals(self, turn_number: int, turn_id: int | None, restaurant_id: int) -> None:
         if not turn_number:
@@ -468,3 +469,9 @@ class MySQLPoller:
                 })
             async with self._state.lock:
                 self._state.restaurant_state_history = history
+
+    async def _refresh_blog_articles(self) -> None:
+        rows = await self._reader.fetch_blog_articles(limit=50)
+        if rows is not None:
+            async with self._state.lock:
+                self._state.blog_articles = rows

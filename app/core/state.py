@@ -49,6 +49,9 @@ class StateStore:
     # live events (replayed from sse_events table)
     events: deque = field(default_factory=lambda: deque(maxlen=2000))
 
+    # blog articles (news and bios from hackablog)
+    blog_articles: list[dict] = field(default_factory=list)
+
     # derived outputs
     active_alerts: dict[str, AlertInstance] = field(default_factory=dict)
 
@@ -162,4 +165,5 @@ class StateStore:
                 "ingredient_bid_history": list(self.ingredient_bid_history),
                 "phase_transitions_recent": list(self.phase_transitions_recent),
                 "restaurant_state_history": list(self.restaurant_state_history),
+                "blog_articles": list(self.blog_articles),
             }

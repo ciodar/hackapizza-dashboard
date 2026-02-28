@@ -347,6 +347,38 @@ class MySQLReader:
                 rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
+    async def fetch_blog_articles(self, category: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        """Fetch blog articles from the blog_articles table, optionally filtered by category."""
+        try:
+            async with self._pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cur:
+                    if category:
+                        await cur.execute(
+                            """
+                            SELECT id, guid, title, slug, category, author, pub_date, summary, content, fetched_at
+                            FROM blog_articles
+                            WHERE category = %s
+                            ORDER BY pub_date DESC
+                            LIMIT %s
+                            """,
+                            (category, limit),
+                        )
+                    else:
+                        await cur.execute(
+                            """
+                            SELECT id, guid, title, slug, category, author, pub_date, summary, content, fetched_at
+                            FROM blog_articles
+                            ORDER BY pub_date DESC
+                            LIMIT %s
+                            """,
+                            (limit,),
+                        )
+                    rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"fetch_blog_articles failed: {e}")
+            return []
+
     async def fetch_phase_transitions_recent(self, limit: int = 50) -> list[dict[str, Any]]:
         """Fetch recent phase_transitions rows, newest first."""
         async with self._pool.acquire() as conn:
