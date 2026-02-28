@@ -10,8 +10,6 @@ from app.core.state import StateStore
 from app.core.event_bus import EventBus
 from app.clients.hackapizza_http import HackapizzaHttpClient
 from app.clients.hackapizza_mcp import HackapizzaMcpClient
-from app.collectors.registry import build_endpoint_registry
-from app.collectors.poller import PollScheduler
 from app.alerts.engine import AlertEngine
 from app.storage.sqlite import SQLiteStore
 from app.storage.repository import Repository
@@ -70,11 +68,7 @@ async def startup():
         except Exception as exc:
             logger.warning(f"Could not connect to MySQL, dashboard will work without live events: {exc}")
 
-    specs = build_endpoint_registry()
-    scheduler = PollScheduler(state, http_client, specs, config.max_concurrency)
     alert_engine = AlertEngine(state)
-
-    _tasks.append(asyncio.create_task(scheduler.run_forever(get_ctx), name="poller"))
     _tasks.append(asyncio.create_task(alert_engine.run_forever(), name="alerts"))
 
     logger.info("Background tasks started (SSE disabled — reserved for agent)")

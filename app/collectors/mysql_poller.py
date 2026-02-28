@@ -9,6 +9,10 @@ from app.core.state import StateStore
 from app.models.common import GamePhase
 from app.models.sse import SSEEvent
 from app.storage.mysql_reader import MySQLReader
+from app.collectors.summarizers import (
+    summarize_meals, summarize_restaurants, summarize_market_entries,
+    summarize_bid_history, summarize_menu, summarize_restaurant_detail,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +26,9 @@ PHASE_MAP: dict[str, GamePhase] = {
 
 # If no heartbeat arrives within this window, mark SSE as disconnected
 HEARTBEAT_TIMEOUT_S = 60.0
+
+# Refresh business data every N poll cycles (~5 seconds at default 1s interval)
+BUSINESS_REFRESH_EVERY = 5
 
 
 class MySQLPoller:
@@ -38,6 +45,7 @@ class MySQLPoller:
         self._poll_interval_s = poll_interval_s
         self._last_sse_id: int = 0
         self._last_phase_id: int = 0
+        self._poll_count: int = 0
 
     async def run_forever(self) -> None:
         try:
@@ -95,9 +103,12 @@ class MySQLPoller:
     # ──────────────────────────────────────────────
 
     async def _poll_once(self) -> None:
+        self._poll_count += 1
         await self._process_sse_events()
         await self._process_phase_transitions()
         await self._check_heartbeat_timeout()
+        if self._poll_count % BUSINESS_REFRESH_EVERY == 0:
+            await self._refresh_business_snapshots()
 
     async def _process_sse_events(self) -> None:
         rows = await self._reader.fetch_new_sse_events(self._last_sse_id)
@@ -167,3 +178,114 @@ class MySQLPoller:
                 if age_s > HEARTBEAT_TIMEOUT_S and self._state.sse_connected:
                     self._state.sse_connected = False
                     logger.warning(f"No heartbeat for {age_s:.0f}s — marking SSE disconnected")
+
+    # ──────────────────────────────────────────────
+    # Business data refresh from DB tables
+    # ──────────────────────────────────────────────
+
+    async def _refresh_business_snapshots(self) -> None:
+        restaurant_id = self._runtime_config.get("restaurant_id", 1)
+        turn_number = self._state.turn_number
+        turn_id = self._state.turn_id
+
+        await self._refresh_meals(turn_number, turn_id, restaurant_id)
+        await self._refresh_restaurants()
+        await self._refresh_market()
+        await self._refresh_my_restaurant(restaurant_id)
+        await self._refresh_menu(restaurant_id)
+        if turn_id:
+            await self._refresh_bid_history(turn_id)
+
+    async def _refresh_meals(self, turn_number: int, turn_id: int | None, restaurant_id: int) -> None:
+        if not turn_number:
+            return
+        # First try a dedicated meals table written by the agent
+        rows = await self._reader.try_fetch_rows(
+            "SELECT * FROM meals WHERE turn_id = %s AND restaurant_id = %s ORDER BY id",
+            (turn_id, restaurant_id) if turn_id else (0, restaurant_id),
+        )
+        if rows is None and turn_id:
+            rows = await self._reader.try_fetch_rows(
+                "SELECT * FROM meals WHERE turn_id = %s ORDER BY id", (turn_id,)
+            )
+        if rows is not None:
+            model, _ = summarize_meals(rows, turn_id or 0, restaurant_id)
+            if model:
+                async with self._state.lock:
+                    self._state.meals = model
+                return
+        # Fallback: build from client_spawned SSE events
+        meal_dicts = await self._reader.fetch_meals_for_turn(turn_number)
+        if meal_dicts:
+            model, _ = summarize_meals(meal_dicts, turn_id or 0, restaurant_id)
+            if model:
+                async with self._state.lock:
+                    self._state.meals = model
+
+    async def _refresh_restaurants(self) -> None:
+        rows = await self._reader.try_fetch_rows("SELECT * FROM restaurants ORDER BY id")
+        if rows is None:
+            return
+        model, _ = summarize_restaurants(rows)
+        if model:
+            async with self._state.lock:
+                self._state.restaurants_overview = model
+
+    async def _refresh_market(self) -> None:
+        rows = await self._reader.try_fetch_rows(
+            "SELECT * FROM market_entries WHERE active = 1 OR active IS NULL ORDER BY id"
+        )
+        if rows is None:
+            rows = await self._reader.try_fetch_rows("SELECT * FROM market_entries ORDER BY id")
+        if rows is None:
+            return
+        model, _ = summarize_market_entries(rows)
+        if model:
+            async with self._state.lock:
+                self._state.market = model
+
+    async def _refresh_my_restaurant(self, restaurant_id: int) -> None:
+        rows = await self._reader.try_fetch_rows(
+            "SELECT * FROM restaurant_state WHERE restaurant_id = %s ORDER BY id DESC LIMIT 1",
+            (restaurant_id,),
+        )
+        if rows is None:
+            rows = await self._reader.try_fetch_rows(
+                "SELECT * FROM restaurants WHERE id = %s LIMIT 1", (restaurant_id,)
+            )
+        if not rows:
+            return
+        model, _ = summarize_restaurant_detail(rows[0], restaurant_id)
+        if model:
+            async with self._state.lock:
+                self._state.my_restaurant = model
+
+    async def _refresh_menu(self, restaurant_id: int) -> None:
+        rows = await self._reader.try_fetch_rows(
+            "SELECT * FROM menu_items WHERE restaurant_id = %s ORDER BY id", (restaurant_id,)
+        )
+        if rows is None:
+            rows = await self._reader.try_fetch_rows(
+                "SELECT * FROM menu WHERE restaurant_id = %s ORDER BY id", (restaurant_id,)
+            )
+        if rows is None:
+            return
+        model, _ = summarize_menu(rows, restaurant_id)
+        if model:
+            async with self._state.lock:
+                self._state.my_menu = model
+
+    async def _refresh_bid_history(self, turn_id: int) -> None:
+        rows = await self._reader.try_fetch_rows(
+            "SELECT * FROM bid_history WHERE turn_id = %s ORDER BY id", (turn_id,)
+        )
+        if rows is None:
+            rows = await self._reader.try_fetch_rows(
+                "SELECT * FROM bids WHERE turn_id = %s ORDER BY id", (turn_id,)
+            )
+        if rows is None:
+            return
+        model, _ = summarize_bid_history(rows, turn_id)
+        if model:
+            async with self._state.lock:
+                self._state.bid_history = model

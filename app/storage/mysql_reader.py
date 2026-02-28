@@ -93,3 +93,40 @@ class MySQLReader:
                 )
                 row = await cur.fetchone()
         return dict(row) if row else None
+
+    async def fetch_meals_for_turn(self, turn_number: int) -> list[dict[str, Any]]:
+        """Build meals list from client_spawned SSE events for the given turn_number."""
+        async with self._pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT id, event_json FROM sse_events "
+                    "WHERE event_type = 'client_spawned' AND turn_number = %s ORDER BY id",
+                    (turn_number,),
+                )
+                rows = await cur.fetchall()
+        meals = []
+        for row in rows:
+            data = row.get("event_json") or {}
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except Exception:
+                    data = {}
+            meals.append({
+                "client_id": data.get("client_id") or data.get("clientId") or str(row["id"]),
+                "client_name": data.get("clientName") or data.get("client_name"),
+                "order": data.get("orderText") or data.get("order_text") or data.get("order"),
+                "executed": data.get("executed", False),
+            })
+        return meals
+
+    async def try_fetch_rows(self, query: str, params: tuple = ()) -> list[dict[str, Any]] | None:
+        """Execute a query and return rows, or None if the table/query fails."""
+        try:
+            async with self._pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cur:
+                    await cur.execute(query, params)
+                    rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return None
