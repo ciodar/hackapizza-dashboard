@@ -12,6 +12,7 @@ from app.storage.mysql_reader import MySQLReader
 from app.collectors.summarizers import (
     summarize_meals, summarize_restaurants, summarize_market_entries,
     summarize_bid_history, summarize_menu, summarize_restaurant_detail,
+    summarize_recipe_stats, summarize_ingredient_bid_stats,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,8 +63,8 @@ class MySQLPoller:
             except Exception as exc:
                 logger.warning(f"MySQLPoller poll error: {exc}")
                 async with self._state.lock:
-                    self._state.sse_connected = False
-                    self._state.last_sse_error = f"MySQL unavailable: {exc}"
+                    self._state.db_connected = False
+                    self._state.last_db_error = f"MySQL unavailable: {exc}"
             await asyncio.sleep(self._poll_interval_s)
 
     # ──────────────────────────────────────────────
@@ -133,8 +134,8 @@ class MySQLPoller:
 
                 if etype == "heartbeat":
                     self._state.last_heartbeat_ms = ts_ms
-                    self._state.sse_connected = True
-                    self._state.last_sse_error = None
+                    self._state.db_connected = True
+                    self._state.last_db_error = None
 
                 elif etype == "game_started":
                     data = row["event_json"] or {}
@@ -175,9 +176,9 @@ class MySQLPoller:
         async with self._state.lock:
             if self._state.last_heartbeat_ms:
                 age_s = (int(time.time() * 1000) - self._state.last_heartbeat_ms) / 1000.0
-                if age_s > HEARTBEAT_TIMEOUT_S and self._state.sse_connected:
-                    self._state.sse_connected = False
-                    logger.warning(f"No heartbeat for {age_s:.0f}s — marking SSE disconnected")
+                if age_s > HEARTBEAT_TIMEOUT_S and self._state.db_connected:
+                    self._state.db_connected = False
+                    logger.warning(f"No heartbeat for {age_s:.0f}s — marking DB disconnected")
 
     # ──────────────────────────────────────────────
     # Business data refresh from DB tables
@@ -188,13 +189,22 @@ class MySQLPoller:
         turn_number = self._state.turn_number
         turn_id = self._state.turn_id
 
+        await self._refresh_my_restaurant(restaurant_id, turn_number)
+        await self._refresh_menu(turn_number)
         await self._refresh_meals(turn_number, turn_id, restaurant_id)
         await self._refresh_restaurants()
-        await self._refresh_market()
-        await self._refresh_my_restaurant(restaurant_id)
-        await self._refresh_menu(restaurant_id)
+        await self._refresh_market(turn_number)
         if turn_id:
             await self._refresh_bid_history(turn_id)
+            await self._refresh_recipe_stats(turn_id)
+            await self._refresh_ingredient_bid_stats(turn_id)
+        await self._refresh_decisions(turn_number)
+        await self._refresh_mcp_calls(turn_number)
+        await self._refresh_recipes()
+        await self._refresh_snapshots_history()
+        await self._refresh_agent_prompts()
+        await self._refresh_ingredient_bid_history()
+        await self._refresh_phase_transitions()
 
     async def _refresh_meals(self, turn_number: int, turn_id: int | None, restaurant_id: int) -> None:
         if not turn_number:
@@ -223,28 +233,42 @@ class MySQLPoller:
                     self._state.meals = model
 
     async def _refresh_restaurants(self) -> None:
+        # Try legacy `restaurants` table first; if missing, derive from SSE game_started
         rows = await self._reader.try_fetch_rows("SELECT * FROM restaurants ORDER BY id")
-        if rows is None:
+        if rows is not None:
+            model, _ = summarize_restaurants(rows)
+            if model:
+                async with self._state.lock:
+                    self._state.restaurants_overview = model
             return
-        model, _ = summarize_restaurants(rows)
-        if model:
-            async with self._state.lock:
-                self._state.restaurants_overview = model
+        # Fallback: build single-restaurant overview from latest snapshot
+        # (at minimum we can show our own restaurant)
 
-    async def _refresh_market(self) -> None:
+    async def _refresh_market(self, turn_number: int) -> None:
+        # Try legacy `market_entries` table first
         rows = await self._reader.try_fetch_rows(
             "SELECT * FROM market_entries WHERE active = 1 OR active IS NULL ORDER BY id"
         )
         if rows is None:
             rows = await self._reader.try_fetch_rows("SELECT * FROM market_entries ORDER BY id")
-        if rows is None:
-            return
-        model, _ = summarize_market_entries(rows)
-        if model:
-            async with self._state.lock:
-                self._state.market = model
+        if rows is not None:
+            model, _ = summarize_market_entries(rows)
+            if model:
+                async with self._state.lock:
+                    self._state.market = model
 
-    async def _refresh_my_restaurant(self, restaurant_id: int) -> None:
+    async def _refresh_my_restaurant(self, restaurant_id: int, turn_number: int | None = None) -> None:
+        # Try actual snapshots table (kind in priority order)
+        for kind in ("restaurant_post_bid", "restaurant", "turn_end"):
+            snap = await self._reader.fetch_latest_snapshot(kind, turn_number or None)
+            if snap and snap.get("data_json"):
+                data = snap["data_json"]
+                model, _ = summarize_restaurant_detail(data, restaurant_id)
+                if model:
+                    async with self._state.lock:
+                        self._state.my_restaurant = model
+                    return
+        # Fallback: legacy tables
         rows = await self._reader.try_fetch_rows(
             "SELECT * FROM restaurant_state WHERE restaurant_id = %s ORDER BY id DESC LIMIT 1",
             (restaurant_id,),
@@ -253,14 +277,30 @@ class MySQLPoller:
             rows = await self._reader.try_fetch_rows(
                 "SELECT * FROM restaurants WHERE id = %s LIMIT 1", (restaurant_id,)
             )
-        if not rows:
-            return
-        model, _ = summarize_restaurant_detail(rows[0], restaurant_id)
-        if model:
-            async with self._state.lock:
-                self._state.my_restaurant = model
+        if rows:
+            model, _ = summarize_restaurant_detail(rows[0], restaurant_id)
+            if model:
+                async with self._state.lock:
+                    self._state.my_restaurant = model
 
-    async def _refresh_menu(self, restaurant_id: int) -> None:
+    async def _refresh_menu(self, turn_number: int | None = None) -> None:
+        restaurant_id = self._runtime_config.get("restaurant_id", 1)
+        # Try decisions table (menu_plan decision contains the chosen menu)
+        decisions = await self._reader.fetch_decisions(
+            decision_type="menu_plan", turn_number=turn_number, limit=1
+        )
+        if decisions:
+            data = decisions[0].get("data_json") or {}
+            # menu decision data_json has items list: [{name, price}, ...]
+            items = data.get("items") or data.get("menu") or []
+            if items and isinstance(items, list):
+                rows = [{"name": it.get("name") or it.get("dish", ""), "price": it.get("price")} for it in items]
+                model, _ = summarize_menu(rows, restaurant_id)
+                if model:
+                    async with self._state.lock:
+                        self._state.my_menu = model
+                    return
+        # Fallback: legacy tables
         rows = await self._reader.try_fetch_rows(
             "SELECT * FROM menu_items WHERE restaurant_id = %s ORDER BY id", (restaurant_id,)
         )
@@ -289,3 +329,81 @@ class MySQLPoller:
         if model:
             async with self._state.lock:
                 self._state.bid_history = model
+
+    async def _refresh_recipe_stats(self, turn_id: int) -> None:
+        rows = await self._reader.fetch_recipe_stats(turn_id=turn_id)
+        if not rows:
+            return
+        stats, _ = summarize_recipe_stats(rows)
+        async with self._state.lock:
+            self._state.recipe_stats_current = stats
+
+    async def _refresh_ingredient_bid_stats(self, turn_id: int) -> None:
+        rows = await self._reader.fetch_ingredient_bid_stats(turn_id=turn_id)
+        if not rows:
+            return
+        stats, _ = summarize_ingredient_bid_stats(rows)
+        async with self._state.lock:
+            self._state.ingredient_bid_stats_current = stats
+
+    async def _refresh_decisions(self, turn_number: int | None = None) -> None:
+        rows = await self._reader.fetch_decisions(turn_number=turn_number, limit=50)
+        if rows is not None:
+            async with self._state.lock:
+                self._state.decisions_recent = rows
+
+    async def _refresh_mcp_calls(self, turn_number: int | None = None) -> None:
+        rows = await self._reader.fetch_mcp_calls(turn_number=turn_number, limit=100)
+        if rows is not None:
+            async with self._state.lock:
+                self._state.mcp_calls_recent = rows
+
+    async def _refresh_snapshots_history(self) -> None:
+        """Fetch per-turn restaurant snapshots for balance/reputation history."""
+        rows = await self._reader.fetch_snapshots("restaurant_post_bid", limit=30)
+        if not rows:
+            rows = await self._reader.fetch_snapshots("restaurant", limit=30)
+        if not rows:
+            rows = await self._reader.fetch_snapshots("turn_end", limit=30)
+        if rows:
+            history = []
+            seen_turns = set()
+            for row in reversed(rows):  # oldest first
+                turn = row.get("turn_number") or 0
+                if turn in seen_turns:
+                    continue
+                seen_turns.add(turn)
+                data = row.get("data_json") or {}
+                history.append({
+                    "turn_number": turn,
+                    "balance": data.get("balance"),
+                    "reputation": data.get("reputation"),
+                    "clients_served": data.get("clients_served"),
+                    "ts": row.get("ts"),
+                })
+            async with self._state.lock:
+                self._state.snapshots_history = history
+
+    async def _refresh_recipes(self) -> None:
+        rows = await self._reader.fetch_recipes_with_ingredients()
+        if rows:
+            async with self._state.lock:
+                self._state.recipes_cache = rows
+
+    async def _refresh_agent_prompts(self) -> None:
+        rows = await self._reader.fetch_agent_prompts(limit=50)
+        if rows is not None:
+            async with self._state.lock:
+                self._state.agent_prompts_recent = rows
+
+    async def _refresh_ingredient_bid_history(self) -> None:
+        rows = await self._reader.fetch_ingredient_bid_history(limit=300)
+        if rows is not None:
+            async with self._state.lock:
+                self._state.ingredient_bid_history = rows
+
+    async def _refresh_phase_transitions(self) -> None:
+        rows = await self._reader.fetch_phase_transitions_recent(limit=50)
+        if rows is not None:
+            async with self._state.lock:
+                self._state.phase_transitions_recent = rows

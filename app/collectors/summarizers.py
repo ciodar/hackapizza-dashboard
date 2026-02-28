@@ -181,10 +181,11 @@ def summarize_bid_history(payload: Any, turn_id: int) -> tuple[BidHistorySnapsho
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            ingredient = _first(item, "ingredient", "ingrediente")
+            # bid_history table uses ingredient_name + price (not ingredient + bid)
+            ingredient = _first(item, "ingredient_name", "ingredient", "ingrediente")
             if isinstance(ingredient, dict):
                 ingredient = ingredient.get("name") or ingredient.get("nome") or str(ingredient)
-            bid = _float(_first(item, "bid", "offer", "offerta"))
+            bid = _float(_first(item, "price", "bid", "offer", "offerta"))
             quantity = _float(_first(item, "quantity", "qty", "quantita"))
             restaurant_id = _int(_first(item, "restaurant_id", "restaurantId"))
             bids.append(BidRow(ingredient=ingredient, bid=bid, quantity=quantity, restaurant_id=restaurant_id, raw=item))
@@ -198,5 +199,51 @@ def summarize_recipes(payload: Any) -> tuple[list[dict], dict[str, Any]]:
         if not isinstance(payload, list):
             return [], {"parse_ok": False, "error": "expected list"}
         return payload, {"parse_ok": True, "count": len(payload)}
+    except Exception as e:
+        return [], {"parse_ok": False, "error": str(e)}
+
+
+def summarize_recipe_stats(payload: Any) -> tuple[list[dict], dict[str, Any]]:
+    """Normalize recipe_stats rows from the DB."""
+    try:
+        if not isinstance(payload, list):
+            return [], {"parse_ok": False, "error": "expected list"}
+        result = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            result.append({
+                "recipe_name": item.get("recipe_name") or item.get("name") or "",
+                "prestige": _int(item.get("prestige")) or 0,
+                "turn_id": _int(item.get("turn_id")),
+                "num_requests": _int(item.get("num_requests")) or 0,
+                "num_served": _int(item.get("num_served")) or 0,
+                "avg_price": _float(item.get("avg_price")),
+                "min_price": _float(item.get("min_price")),
+                "max_price": _float(item.get("max_price")),
+            })
+        return result, {"parse_ok": True, "count": len(result)}
+    except Exception as e:
+        return [], {"parse_ok": False, "error": str(e)}
+
+
+def summarize_ingredient_bid_stats(payload: Any) -> tuple[list[dict], dict[str, Any]]:
+    """Normalize ingredient_bid_stats rows from the DB."""
+    try:
+        if not isinstance(payload, list):
+            return [], {"parse_ok": False, "error": "expected list"}
+        result = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            result.append({
+                "ingredient_name": item.get("ingredient_name") or item.get("name") or "",
+                "turn_id": _int(item.get("turn_id")),
+                "avg_price_paid": _float(item.get("avg_price_paid")),
+                "min_price_paid": _float(item.get("min_price_paid")),
+                "max_price_paid": _float(item.get("max_price_paid")),
+                "total_quantity": _int(item.get("total_quantity")) or 0,
+            })
+        return result, {"parse_ok": True, "count": len(result)}
     except Exception as e:
         return [], {"parse_ok": False, "error": str(e)}

@@ -3,6 +3,7 @@ from app.core.state import StateStore
 from app.aggregators.market_intel import compute_market_intel
 from app.models.market import MarketSnapshot, MarketEntry
 import time
+import json
 
 _render_nav = lambda: None
 
@@ -16,7 +17,10 @@ def build_market_page(state: StateStore) -> None:
             @ui.refreshable
             def render_market(snap: dict):
                 entries_data = snap.get("market_entries") or []
+                decisions = snap.get("decisions_recent") or []
+                market_decisions = [d for d in decisions if "market" in (d.get("decision_type") or "")]
                 
+                # ── Live market entries (if available) ──
                 if entries_data:
                     entries = [MarketEntry(e["id"], e["side"], e["ingredient"], e["quantity"], e["price"], e["owner_id"], {}) for e in entries_data]
                     market_snap = MarketSnapshot(ts_ms=int(time.time()*1000), entries=entries)
@@ -72,8 +76,37 @@ def build_market_page(state: StateStore) -> None:
                         for e in entries_data
                     ]
                     ui.table(columns=columns, rows=rows, row_key="id").classes("w-full")
-                else:
-                    ui.label("No market entries available.").classes("text-grey")
+
+                # ── Market agent decisions from DB ──
+                if market_decisions:
+                    ui.label("🤖 Market Agent Activity (this turn)").classes("text-lg font-bold mt-4")
+                    for d in market_decisions[:10]:
+                        data = d.get("data_json") or {}
+                        actions = data.get("actions") or []
+                        spent = data.get("spent") or 0.0
+                        dtype = d.get("decision_type") or ""
+                        phase_label = "🕐 Waiting" if "waiting" in dtype else "🍽️ Serving"
+                        with ui.card().classes("w-full"):
+                            with ui.row().classes("items-center gap-2"):
+                                ui.badge(phase_label, color="blue")
+                                ui.label(f"Turn #{d.get('turn_number', '?')}").classes("text-sm text-grey")
+                                ui.label(f"Spent: {spent:.2f} cr").classes("text-sm font-bold")
+                            if actions:
+                                for act in actions:
+                                    atype = act.get("type", "?")
+                                    color = "green" if atype == "EXECUTE" else ("blue" if atype == "CREATE" else "orange")
+                                    side = act.get("side") or ""
+                                    ing = act.get("ingredient_name") or ""
+                                    qty = act.get("quantity") or ""
+                                    price = act.get("price") or ""
+                                    label = f"{atype}"
+                                    if ing:
+                                        label += f" {side} {qty}x {ing}"
+                                        if price:
+                                            label += f" @ {price}"
+                                    ui.badge(label, color=color).classes("text-xs")
+                elif not entries_data:
+                    ui.label("No market data. Market entries reset each turn; activity shows after agent runs.").classes("text-grey")
             
             async def tick():
                 snap = await state.snapshot()

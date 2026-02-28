@@ -12,9 +12,35 @@ def build_serving_page(state: StateStore) -> None:
             
             @ui.refreshable
             def render_meals(snap: dict):
+                # ── Recipe stats from DB ──
+                recipe_stats = snap.get("recipe_stats") or []
+                if recipe_stats:
+                    ui.label("📊 Recipe Performance (this turn)").classes("text-lg font-bold")
+                    columns = [
+                        {"name": "recipe", "label": "Recipe", "field": "recipe", "sortable": True},
+                        {"name": "requests", "label": "Requests", "field": "requests", "sortable": True},
+                        {"name": "served", "label": "Served", "field": "served", "sortable": True},
+                        {"name": "rate", "label": "Service Rate", "field": "rate", "sortable": True},
+                        {"name": "prestige", "label": "Prestige", "field": "prestige", "sortable": True},
+                    ]
+                    rows = []
+                    for s in recipe_stats:
+                        requests = s.get("num_requests") or 0
+                        served = s.get("num_served") or 0
+                        rate = f"{served / requests * 100:.0f}%" if requests > 0 else "—"
+                        rows.append({
+                            "recipe": s.get("recipe_name") or "Unknown",
+                            "requests": str(requests),
+                            "served": str(served),
+                            "rate": rate,
+                            "prestige": str(s.get("prestige") or 0),
+                        })
+                    ui.table(columns=columns, rows=rows, row_key="recipe").classes("w-full")
+
+                # ── Live meals ──
                 meals = snap.get("meals") or []
                 
-                with ui.row().classes("gap-4 mb-4"):
+                with ui.row().classes("gap-4 mb-4 mt-4"):
                     total = len(meals)
                     executed = sum(1 for m in meals if m.get("executed"))
                     pending = total - executed
@@ -49,8 +75,8 @@ def build_serving_page(state: StateStore) -> None:
                         for m in meals
                     ]
                     ui.table(columns=columns, rows=rows, row_key="client").classes("w-full")
-                else:
-                    ui.label("No meals data. Set turn_id in config.").classes("text-grey")
+                elif not recipe_stats:
+                    ui.label("No meals data yet. Populates during serving phase.").classes("text-grey")
                 
                 events = [e for e in (snap.get("recent_events") or []) if e.get("type") in ("client_spawned", "preparation_complete", "serve_dish")]
                 if events:

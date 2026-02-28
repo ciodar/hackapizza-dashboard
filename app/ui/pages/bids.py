@@ -15,54 +15,111 @@ def build_bids_page(state: StateStore) -> None:
             
             @ui.refreshable
             def render_bids(snap: dict):
-                bids_data = snap.get("bids") or []
-                
-                if not bids_data:
-                    ui.label("No bid history. Set turn_id in config.").classes("text-grey")
-                    return
-                
-                bid_rows = [BidRow(b.get("ingredient"), b.get("bid"), b.get("quantity"), b.get("restaurant_id"), {}) for b in bids_data]
-                snap_obj = BidHistorySnapshot(ts_ms=int(time.time()*1000), turn_id=0, bids=bid_rows)
-                intel = compute_bid_intel(snap_obj)
-                
-                if intel and intel.per_ingredient:
-                    ui.label("Distribution per Ingredient").classes("text-lg font-bold")
+                # ── Cross-turn ingredient price trends ──
+                bid_history = snap.get("ingredient_bid_history") or []
+                if bid_history:
+                    ui.label("📉 Ingredient Price Trends (All Turns)").classes("text-lg font-bold")
+                    # Group by ingredient
+                    from collections import defaultdict
+                    by_ingredient: dict[str, list[dict]] = defaultdict(list)
+                    for row in bid_history:
+                        by_ingredient[row.get("ingredient_name") or "?"].append(row)
                     columns = [
                         {"name": "ingredient", "label": "Ingredient", "field": "ingredient", "sortable": True},
-                        {"name": "min_bid", "label": "Min", "field": "min_bid"},
-                        {"name": "median_bid", "label": "Median", "field": "median_bid"},
-                        {"name": "max_bid", "label": "Max", "field": "max_bid"},
-                        {"name": "count", "label": "Count", "field": "count"},
+                        {"name": "turns", "label": "Turns", "field": "turns"},
+                        {"name": "min_ever", "label": "Min Ever", "field": "min_ever", "sortable": True},
+                        {"name": "avg_avg", "label": "Avg", "field": "avg_avg", "sortable": True},
+                        {"name": "max_ever", "label": "Max Ever", "field": "max_ever", "sortable": True},
+                    ]
+                    rows = []
+                    for ing, records in sorted(by_ingredient.items()):
+                        mins = [r["min_price_paid"] for r in records if r.get("min_price_paid") is not None]
+                        avgs = [r["avg_price_paid"] for r in records if r.get("avg_price_paid") is not None]
+                        maxs = [r["max_price_paid"] for r in records if r.get("max_price_paid") is not None]
+                        turn_ids = sorted({r.get("turn_id") for r in records if r.get("turn_id")})
+                        rows.append({
+                            "ingredient": ing,
+                            "turns": ", ".join(str(t) for t in turn_ids),
+                            "min_ever": f"{min(mins):.2f}" if mins else "—",
+                            "avg_avg": f"{sum(avgs)/len(avgs):.2f}" if avgs else "—",
+                            "max_ever": f"{max(maxs):.2f}" if maxs else "—",
+                        })
+                    ui.table(columns=columns, rows=rows, row_key="ingredient").classes("w-full")
+
+                # ── Ingredient bid stats from DB (all restaurants, per turn) ──
+                ing_stats = snap.get("ingredient_bid_stats") or []
+                if ing_stats:
+                    ui.label("📈 Per-Ingredient Bid Stats (all restaurants this turn)").classes("text-lg font-bold")
+                    columns = [
+                        {"name": "ingredient", "label": "Ingredient", "field": "ingredient", "sortable": True},
+                        {"name": "min_price", "label": "Min", "field": "min_price", "sortable": True},
+                        {"name": "avg_price", "label": "Avg", "field": "avg_price", "sortable": True},
+                        {"name": "max_price", "label": "Max", "field": "max_price", "sortable": True},
+                        {"name": "total_qty", "label": "Total Qty", "field": "total_qty", "sortable": True},
                     ]
                     rows = [
                         {
-                            "ingredient": s.ingredient,
-                            "min_bid": f"{s.min_bid:.2f}" if s.min_bid is not None else "—",
-                            "median_bid": f"{s.median_bid:.2f}" if s.median_bid is not None else "—",
-                            "max_bid": f"{s.max_bid:.2f}" if s.max_bid is not None else "—",
-                            "count": str(s.sample_count),
+                            "ingredient": s.get("ingredient_name") or "Unknown",
+                            "min_price": f"{s['min_price_paid']:.2f}" if s.get("min_price_paid") is not None else "—",
+                            "avg_price": f"{s['avg_price_paid']:.2f}" if s.get("avg_price_paid") is not None else "—",
+                            "max_price": f"{s['max_price_paid']:.2f}" if s.get("max_price_paid") is not None else "—",
+                            "total_qty": str(s.get("total_quantity") or 0),
                         }
-                        for s in intel.per_ingredient
+                        for s in ing_stats
                     ]
                     ui.table(columns=columns, rows=rows, row_key="ingredient").classes("w-full")
+
+                # ── Per-bid distribution from raw bid_history ──
+                bids_data = snap.get("bids") or []
                 
-                ui.label("All Bids").classes("text-lg font-bold mt-4")
-                columns = [
-                    {"name": "ingredient", "label": "Ingredient", "field": "ingredient", "sortable": True},
-                    {"name": "bid", "label": "Bid", "field": "bid", "sortable": True},
-                    {"name": "quantity", "label": "Qty", "field": "quantity"},
-                    {"name": "restaurant", "label": "Restaurant", "field": "restaurant"},
-                ]
-                rows = [
-                    {
-                        "ingredient": b.get("ingredient") or "Unknown",
-                        "bid": f"{b['bid']:.2f}" if b.get("bid") is not None else "N/A",
-                        "quantity": str(b.get("quantity") or ""),
-                        "restaurant": str(b.get("restaurant_id") or ""),
-                    }
-                    for b in bids_data
-                ]
-                ui.table(columns=columns, rows=rows, row_key="ingredient").classes("w-full")
+                if not bids_data and not ing_stats:
+                    ui.label("No bid history. Runs after turn ends (stopped phase).").classes("text-grey")
+                    return
+                
+                if bids_data:
+                    bid_rows = [BidRow(b.get("ingredient"), b.get("bid"), b.get("quantity"), b.get("restaurant_id"), {}) for b in bids_data]
+                    snap_obj = BidHistorySnapshot(ts_ms=int(time.time()*1000), turn_id=0, bids=bid_rows)
+                    intel = compute_bid_intel(snap_obj)
+                    
+                    if intel and intel.per_ingredient:
+                        ui.label("Distribution per Ingredient").classes("text-lg font-bold mt-4")
+                        columns = [
+                            {"name": "ingredient", "label": "Ingredient", "field": "ingredient", "sortable": True},
+                            {"name": "min_bid", "label": "Min", "field": "min_bid"},
+                            {"name": "median_bid", "label": "Median", "field": "median_bid"},
+                            {"name": "max_bid", "label": "Max", "field": "max_bid"},
+                            {"name": "count", "label": "Count", "field": "count"},
+                        ]
+                        rows = [
+                            {
+                                "ingredient": s.ingredient,
+                                "min_bid": f"{s.min_bid:.2f}" if s.min_bid is not None else "—",
+                                "median_bid": f"{s.median_bid:.2f}" if s.median_bid is not None else "—",
+                                "max_bid": f"{s.max_bid:.2f}" if s.max_bid is not None else "—",
+                                "count": str(s.sample_count),
+                            }
+                            for s in intel.per_ingredient
+                        ]
+                        ui.table(columns=columns, rows=rows, row_key="ingredient").classes("w-full")
+                    
+                    ui.label("All Bids").classes("text-lg font-bold mt-4")
+                    columns = [
+                        {"name": "ingredient", "label": "Ingredient", "field": "ingredient", "sortable": True},
+                        {"name": "bid", "label": "Price", "field": "bid", "sortable": True},
+                        {"name": "quantity", "label": "Qty", "field": "quantity"},
+                        {"name": "restaurant", "label": "Restaurant", "field": "restaurant"},
+                    ]
+                    rows = [
+                        {
+                            "_idx": str(i),
+                            "ingredient": b.get("ingredient") or "Unknown",
+                            "bid": f"{b['bid']:.2f}" if b.get("bid") is not None else "N/A",
+                            "quantity": str(b.get("quantity") or ""),
+                            "restaurant": str(b.get("restaurant_id") or ""),
+                        }
+                        for i, b in enumerate(bids_data)
+                    ]
+                    ui.table(columns=columns, rows=rows, row_key="_idx").classes("w-full")
             
             async def tick():
                 snap = await state.snapshot()
