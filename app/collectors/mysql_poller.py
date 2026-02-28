@@ -218,6 +218,7 @@ class MySQLPoller:
         await self._refresh_agent_prompts()
         await self._refresh_ingredient_bid_history()
         await self._refresh_phase_transitions()
+        await self._refresh_restaurant_state_turns()
 
     async def _refresh_meals(self, turn_number: int, turn_id: int | None, restaurant_id: int) -> None:
         if not turn_number:
@@ -271,6 +272,20 @@ class MySQLPoller:
                     self._state.market = model
 
     async def _refresh_my_restaurant(self, restaurant_id: int, turn_number: int | None = None) -> None:
+        # Try restaurant_state_turns first (most accurate, agent-written)
+        rst_rows = await self._reader.fetch_restaurant_state_turns(limit=1)
+        if rst_rows:
+            row = rst_rows[0]
+            data = {
+                "balance": float(row["balance"]) if row.get("balance") is not None else None,
+                "reputation": float(row["reputation"]) if row.get("reputation") is not None else None,
+                "is_open": bool(row.get("is_open")),
+            }
+            model, _ = summarize_restaurant_detail(data, restaurant_id)
+            if model:
+                async with self._state.lock:
+                    self._state.my_restaurant = model
+                return
         # Try actual snapshots table (kind in priority order)
         for kind in ("restaurant_post_bid", "restaurant", "turn_end"):
             snap = await self._reader.fetch_latest_snapshot(kind, turn_number or None)
@@ -373,6 +388,22 @@ class MySQLPoller:
 
     async def _refresh_snapshots_history(self) -> None:
         """Fetch per-turn restaurant snapshots for balance/reputation history."""
+        # Primary: restaurant_state_turns table (written by agent at end of each turn)
+        rst_rows = await self._reader.fetch_restaurant_state_turns(limit=30)
+        if rst_rows:
+            history = []
+            for row in reversed(rst_rows):  # oldest first
+                history.append({
+                    "turn_number": row.get("turn_number") or 0,
+                    "balance": float(row["balance"]) if row.get("balance") is not None else None,
+                    "reputation": float(row["reputation"]) if row.get("reputation") is not None else None,
+                    "clients_served": None,
+                    "ts": row.get("ts"),
+                })
+            async with self._state.lock:
+                self._state.snapshots_history = history
+            return
+        # Fallback: snapshots table
         rows = await self._reader.fetch_snapshots("restaurant_post_bid", limit=30)
         if not rows:
             rows = await self._reader.fetch_snapshots("restaurant", limit=30)
@@ -420,3 +451,20 @@ class MySQLPoller:
         if rows is not None:
             async with self._state.lock:
                 self._state.phase_transitions_recent = rows
+
+    async def _refresh_restaurant_state_turns(self) -> None:
+        """Fetch restaurant_state_turns for per-turn history."""
+        rows = await self._reader.fetch_restaurant_state_turns(limit=30)
+        if rows is not None:
+            history = []
+            for row in reversed(rows):  # oldest first
+                history.append({
+                    "turn_number": row.get("turn_number") or 0,
+                    "turn_id": row.get("turn_id"),
+                    "balance": float(row["balance"]) if row.get("balance") is not None else None,
+                    "reputation": float(row["reputation"]) if row.get("reputation") is not None else None,
+                    "is_open": bool(row.get("is_open")),
+                    "ts": row.get("ts"),
+                })
+            async with self._state.lock:
+                self._state.restaurant_state_history = history

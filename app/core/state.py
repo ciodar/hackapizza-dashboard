@@ -44,6 +44,7 @@ class StateStore:
     agent_prompts_recent: list[dict] = field(default_factory=list)
     ingredient_bid_history: list[dict] = field(default_factory=list)  # cross-turn bid price trends
     phase_transitions_recent: list[dict] = field(default_factory=list)
+    restaurant_state_history: list[dict] = field(default_factory=list)  # per-turn balance/rep/status
 
     # live events (replayed from sse_events table)
     events: deque = field(default_factory=lambda: deque(maxlen=2000))
@@ -160,4 +161,5 @@ class StateStore:
                 "agent_prompts": list(self.agent_prompts_recent),
                 "ingredient_bid_history": list(self.ingredient_bid_history),
                 "phase_transitions_recent": list(self.phase_transitions_recent),
+                "restaurant_state_history": list(self.restaurant_state_history),
             }

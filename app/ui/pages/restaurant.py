@@ -9,30 +9,34 @@ def build_restaurant_page(state: StateStore) -> None:
     async def restaurant():
         _render_nav()
         with ui.column().classes("w-full p-4 gap-4"):
-            ui.label("🏠 My Restaurant — Turn History").classes("text-2xl font-bold")
+            ui.label("🏠 My Restaurant — State & History").classes("text-2xl font-bold")
             ui.label(
-                "Balance, reputation and inventory history across all turns recorded in the local DB."
+                "Balance, reputation and status — live from restaurant_state_turns table."
             ).classes("text-grey text-sm")
 
             @ui.refreshable
             def render_history(snap: dict):
                 my = snap.get("my_restaurant") or {}
-                history = snap.get("snapshots_history") or []
+                # Prefer restaurant_state_history (from restaurant_state_turns table)
+                rst_history = snap.get("restaurant_state_history") or []
+                history = rst_history or (snap.get("snapshots_history") or [])
                 menu = snap.get("menu") or []
 
-                # ── Current state KPIs ──
+                # ── Current state KPIs (from latest restaurant_state_turns row) ──
+                current_state = rst_history[-1] if rst_history else {}
+                bal = current_state.get("balance") if current_state else my.get("balance")
+                rep = current_state.get("reputation") if current_state else my.get("reputation")
+                is_open = current_state.get("is_open") if current_state else my.get("is_open")
+
                 with ui.row().classes("gap-4 mb-4 flex-wrap"):
                     with ui.card().classes("min-w-[140px]"):
                         ui.label("Balance").classes("text-sm text-grey")
-                        bal = my.get("balance")
                         ui.label(f"💰 {bal:.2f}" if bal is not None else "N/A").classes("text-2xl font-bold")
                     with ui.card().classes("min-w-[140px]"):
                         ui.label("Reputation").classes("text-sm text-grey")
-                        rep = my.get("reputation")
                         ui.label(f"⭐ {rep:.2f}" if rep is not None else "N/A").classes("text-2xl font-bold")
                     with ui.card().classes("min-w-[140px]"):
                         ui.label("Status").classes("text-sm text-grey")
-                        is_open = my.get("is_open")
                         txt = "🟢 Open" if is_open else ("🔴 Closed" if is_open is False else "❓ Unknown")
                         ui.label(txt).classes("text-2xl font-bold")
                     with ui.card().classes("min-w-[140px]"):
@@ -65,26 +69,29 @@ def build_restaurant_page(state: StateStore) -> None:
 
                 # ── Turn history table ──
                 if history:
-                    ui.label("📈 Balance & Reputation History").classes("text-lg font-bold mt-4")
+                    ui.label("📈 Balance & Reputation per Turn").classes("text-lg font-bold mt-4")
                     columns = [
                         {"name": "turn", "label": "Turn", "field": "turn", "sortable": True},
                         {"name": "balance", "label": "Balance", "field": "balance", "sortable": True},
                         {"name": "reputation", "label": "Reputation", "field": "reputation", "sortable": True},
+                        {"name": "status", "label": "Status", "field": "status"},
                         {"name": "clients_served", "label": "Clients Served", "field": "clients_served", "sortable": True},
                     ]
                     rows = []
-                    for h in history:
-                        bal = h.get("balance")
-                        rep = h.get("reputation")
+                    for h in reversed(history):  # newest first in table
+                        b = h.get("balance")
+                        r = h.get("reputation")
                         clients = h.get("clients_served")
+                        open_val = h.get("is_open")
                         rows.append({
                             "turn": str(h.get("turn_number") or 0),
-                            "balance": f"{bal:.2f}" if bal is not None else "—",
-                            "reputation": f"{rep:.2f}" if rep is not None else "—",
+                            "balance": f"{b:.2f}" if b is not None else "—",
+                            "reputation": f"{r:.4f}" if r is not None else "—",
+                            "status": ("🟢" if open_val else "🔴") if open_val is not None else "—",
                             "clients_served": str(clients) if clients is not None else "—",
                         })
                     ui.table(columns=columns, rows=rows, row_key="turn").classes("w-full")
-                elif not my:
+                elif not my and not rst_history:
                     ui.label("No data yet — waiting for agent to run.").classes("text-grey mt-4")
 
             async def tick():
@@ -93,3 +100,4 @@ def build_restaurant_page(state: StateStore) -> None:
 
             render_history({})
             ui.timer(2.0, tick)
+

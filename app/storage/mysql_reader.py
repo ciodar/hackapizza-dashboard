@@ -359,6 +359,15 @@ class MySQLReader:
                 rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
+    async def fetch_restaurant_state_turns(self, limit: int = 30) -> list[dict[str, Any]]:
+        """Fetch restaurant state snapshots per turn from restaurant_state_turns, newest first."""
+        rows = await self.try_fetch_rows(
+            "SELECT id, turn_number, turn_id, balance, reputation, is_open, ts "
+            "FROM restaurant_state_turns ORDER BY turn_number DESC LIMIT %s",
+            (limit,),
+        )
+        return rows or []
+
     async def fetch_ingredient_bid_stats(self, turn_id: int | None = None, limit: int = 100) -> list[dict[str, Any]]:
         """Fetch ingredient_bid_stats rows joined with ingredient name."""
         params: list[Any] = []
