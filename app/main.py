@@ -45,6 +45,7 @@ async def startup():
         )
         try:
             await mysql_reader.connect()
+            state._reader = mysql_reader
             mysql_poller = MySQLPoller(state, mysql_reader, _runtime_config, config.mysql_poll_interval_s)
             _tasks.append(asyncio.create_task(mysql_poller.run_forever(), name="mysql_poller"))
             logger.info("MySQLPoller started — reading from MySQL")

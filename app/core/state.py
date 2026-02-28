@@ -55,6 +55,9 @@ class StateStore:
     # derived outputs
     active_alerts: dict[str, AlertInstance] = field(default_factory=dict)
 
+    # optional reference to MySQLReader for on-demand queries (set at runtime)
+    _reader: Any = field(default=None, init=False, repr=False)
+
     async def snapshot(self) -> dict[str, Any]:
         async with self.lock:
             now_ms = int(time.time() * 1000)
