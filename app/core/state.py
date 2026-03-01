@@ -115,6 +115,8 @@ class StateStore:
                         "client_name": m.client_name,
                         "order_text": m.order_text,
                         "executed": m.executed,
+                        "allergies": m.allergies,
+                        "intolerances": m.intolerances,
                     })
 
             bids = []

@@ -64,12 +64,16 @@ def build_serving_page(state: StateStore) -> None:
                     columns = [
                         {"name": "client", "label": "Client", "field": "client"},
                         {"name": "order", "label": "Order", "field": "order"},
+                        {"name": "allergies", "label": "Allergies", "field": "allergies"},
+                        {"name": "intolerances", "label": "Intolerances", "field": "intolerances"},
                         {"name": "status", "label": "Status", "field": "status"},
                     ]
                     rows = [
                         {
                             "client": m.get("client_name") or m.get("client_id") or "Unknown",
                             "order": (m.get("order_text") or "")[:80],
+                            "allergies": ", ".join(m.get("allergies") or []) or "—",
+                            "intolerances": ", ".join(m.get("intolerances") or []) or "—",
                             "status": "✅ Done" if m.get("executed") else "⏳ Pending",
                         }
                         for m in meals

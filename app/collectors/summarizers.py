@@ -164,7 +164,26 @@ def summarize_meals(payload: Any, turn_id: int, restaurant_id: int) -> tuple[Mea
             client_name = _first(item, "client_name", "clientName", "name", "nome")
             order_text = _first(item, "order", "orderText", "order_text", "richiesta")
             executed = _bool(_first(item, "executed", "served", "servito"))
-            meals.append(MealRequest(client_id=client_id, client_name=client_name, order_text=order_text, executed=executed, raw=item))
+            raw_allergies = item.get("allergies") or []
+            raw_intolerances = item.get("intolerances") or []
+            # JSON columns may be returned as str (some MySQL drivers don't auto-parse)
+            if isinstance(raw_allergies, str):
+                import json as _json
+                try:
+                    raw_allergies = _json.loads(raw_allergies)
+                except Exception:
+                    raw_allergies = []
+            if isinstance(raw_intolerances, str):
+                import json as _json
+                try:
+                    raw_intolerances = _json.loads(raw_intolerances)
+                except Exception:
+                    raw_intolerances = []
+            meals.append(MealRequest(
+                client_id=client_id, client_name=client_name, order_text=order_text,
+                executed=executed, raw=item,
+                allergies=list(raw_allergies), intolerances=list(raw_intolerances),
+            ))
         snap = MealsSnapshot(ts_ms=_ts(), turn_id=turn_id, restaurant_id=restaurant_id, meals=meals)
         total = len(meals)
         exec_count = sum(1 for m in meals if m.executed)

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 @dataclass(frozen=True)
@@ -8,6 +8,8 @@ class MealRequest:
     order_text: str | None
     executed: bool | None
     raw: dict[str, Any]
+    allergies: list[str] = field(default_factory=list)
+    intolerances: list[str] = field(default_factory=list)
 
 @dataclass(frozen=True)
 class MealsSnapshot:
