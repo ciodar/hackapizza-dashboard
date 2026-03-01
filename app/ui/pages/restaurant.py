@@ -67,9 +67,46 @@ def build_restaurant_page(state: StateStore) -> None:
                     ]
                     ui.table(columns=columns, rows=rows, row_key="ingredient").classes("w-full max-w-lg")
 
+                # ── Balance & Reputation trend chart ──
+                if history:
+                    turns = [str(h.get("turn_number") or 0) for h in history]
+                    balances = [h.get("balance") for h in history]
+                    reputations = [h.get("reputation") for h in history]
+                    ui.label("📈 Balance & Reputation Trend").classes("text-lg font-bold mt-4")
+                    ui.echart({
+                        "tooltip": {"trigger": "axis"},
+                        "legend": {"data": ["Balance", "Reputation"]},
+                        "grid": {"right": "10%"},
+                        "xAxis": {"type": "category", "data": turns, "name": "Turn"},
+                        "yAxis": [
+                            {"type": "value", "name": "Balance", "position": "left"},
+                            {"type": "value", "name": "Reputation", "position": "right", "min": 0},
+                        ],
+                        "series": [
+                            {
+                                "name": "Balance",
+                                "type": "line",
+                                "smooth": True,
+                                "data": balances,
+                                "yAxisIndex": 0,
+                                "itemStyle": {"color": "#3b82f6"},
+                                "lineStyle": {"color": "#3b82f6"},
+                            },
+                            {
+                                "name": "Reputation",
+                                "type": "line",
+                                "smooth": True,
+                                "data": reputations,
+                                "yAxisIndex": 1,
+                                "itemStyle": {"color": "#22c55e"},
+                                "lineStyle": {"color": "#22c55e"},
+                            },
+                        ],
+                    }).classes("w-full h-64")
+
                 # ── Turn history table ──
                 if history:
-                    ui.label("📈 Balance & Reputation per Turn").classes("text-lg font-bold mt-4")
+                    ui.label("📋 Balance & Reputation per Turn").classes("text-lg font-bold mt-4")
                     columns = [
                         {"name": "turn", "label": "Turn", "field": "turn", "sortable": True},
                         {"name": "balance", "label": "Balance", "field": "balance", "sortable": True},
