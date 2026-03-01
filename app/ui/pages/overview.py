@@ -114,7 +114,8 @@ def build_overview_page(state: StateStore) -> None:
             
             async def tick():
                 snap = await state.snapshot()
-                render_content.refresh(snap)
+                if snap.get("_changed", True):
+                    render_content.refresh(snap)
             
             render_content({})
             ui.timer(1.5, tick)

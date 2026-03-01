@@ -112,8 +112,9 @@ def build_agent_page(state: StateStore) -> None:
 
             async def tick():
                 snap = await state.snapshot()
-                _last_snap[0] = snap
-                render_prompts.refresh(snap, filter_agent.value)
+                if snap.get("_changed", True):
+                    _last_snap[0] = snap
+                    render_prompts.refresh(snap, filter_agent.value)
 
             filter_agent.on("update:model-value", lambda _: render_prompts.refresh(_last_snap[0], filter_agent.value))
 

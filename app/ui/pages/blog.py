@@ -116,8 +116,9 @@ def build_blog_page(state: StateStore) -> None:
 
             async def tick():
                 snap = await state.snapshot()
-                _last_snap[0] = snap
-                render_articles.refresh(snap, filter_select.value)
+                if snap.get("_changed", True):
+                    _last_snap[0] = snap
+                    render_articles.refresh(snap, filter_select.value)
 
             render_articles({})
             ui.timer(5.0, tick)

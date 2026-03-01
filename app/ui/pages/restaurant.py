@@ -133,7 +133,8 @@ def build_restaurant_page(state: StateStore) -> None:
 
             async def tick():
                 snap = await state.snapshot()
-                render_history.refresh(snap)
+                if snap.get("_changed", True):
+                    render_history.refresh(snap)
 
             render_history({})
             ui.timer(2.0, tick)

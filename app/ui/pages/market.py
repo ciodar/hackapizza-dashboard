@@ -110,7 +110,8 @@ def build_market_page(state: StateStore) -> None:
             
             async def tick():
                 snap = await state.snapshot()
-                render_market.refresh(snap)
+                if snap.get("_changed", True):
+                    render_market.refresh(snap)
             
             render_market({})
             ui.timer(3.0, tick)

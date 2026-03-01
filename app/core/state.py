@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 import time
 from dataclasses import dataclass, field
 from collections import deque
@@ -57,6 +59,9 @@ class StateStore:
 
     # optional reference to MySQLReader for on-demand queries (set at runtime)
     _reader: Any = field(default=None, init=False, repr=False)
+
+    # internal fingerprint for change detection (not exposed in snapshot)
+    _snapshot_fingerprint: str | None = field(default=None, init=False, repr=False)
 
     async def snapshot(self) -> dict[str, Any]:
         async with self.lock:
@@ -142,7 +147,7 @@ class StateStore:
                     "acknowledged": alert.acknowledged,
                 }
 
-            return {
+            result = {
                 "phase": self.phase.value,
                 "turn_number": self.turn_number,
                 "turn_id": self.turn_id,
@@ -170,3 +175,14 @@ class StateStore:
                 "restaurant_state_history": list(self.restaurant_state_history),
                 "blog_articles": list(self.blog_articles),
             }
+            # Compute fingerprint over all keys except heartbeat_age_s (which
+            # changes every second even when no game data has changed).
+            fingerprint_data = {k: v for k, v in result.items() if k != "heartbeat_age_s"}
+            fingerprint = hashlib.md5(
+                json.dumps(fingerprint_data, sort_keys=True, default=str).encode()
+            ).hexdigest()
+            changed = fingerprint != self._snapshot_fingerprint
+            if changed:
+                self._snapshot_fingerprint = fingerprint
+            result["_changed"] = changed
+            return result

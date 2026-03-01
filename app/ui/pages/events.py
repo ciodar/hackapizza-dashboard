@@ -68,8 +68,9 @@ def build_events_page(state: StateStore) -> None:
             
             async def tick():
                 snap = await state.snapshot()
-                render_phases.refresh(snap)
-                render_events.refresh(snap, filter_input.value)
+                if snap.get("_changed", True):
+                    render_phases.refresh(snap)
+                    render_events.refresh(snap, filter_input.value)
             
             render_phases({})
             render_events({})

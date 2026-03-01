@@ -105,8 +105,9 @@ def build_strategy_page(state: StateStore) -> None:
 
             async def tick():
                 snap = await state.snapshot()
-                _last_snap[0] = snap
-                render_strategy.refresh(snap)
+                if snap.get("_changed", True):
+                    _last_snap[0] = snap
+                    render_strategy.refresh(snap)
 
             render_strategy({})
             ui.timer(5.0, tick)

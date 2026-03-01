@@ -259,7 +259,9 @@ def build_bids_page(state: StateStore) -> None:
 
             async def tick():
                 if turn_select.value == 'current':
-                    await load_data()
+                    snap = await state.snapshot()
+                    if snap.get("_changed", True):
+                        await load_data()
 
             render_bids({})
             await load_data()

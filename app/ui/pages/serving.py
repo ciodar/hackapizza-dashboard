@@ -86,7 +86,8 @@ def build_serving_page(state: StateStore) -> None:
             
             async def tick():
                 snap = await state.snapshot()
-                render_meals.refresh(snap)
+                if snap.get("_changed", True):
+                    render_meals.refresh(snap)
             
             render_meals({})
             ui.timer(1.5, tick)

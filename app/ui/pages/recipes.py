@@ -78,7 +78,8 @@ def build_recipes_page(state: StateStore) -> None:
 
             async def tick():
                 snap = await state.snapshot()
-                render_recipes.refresh(snap)
+                if snap.get("_changed", True):
+                    render_recipes.refresh(snap)
 
             render_recipes({})
             ui.timer(5.0, tick)

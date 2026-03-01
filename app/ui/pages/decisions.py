@@ -176,9 +176,10 @@ def build_decisions_page(state: StateStore) -> None:
 
             async def tick():
                 snap = await state.snapshot()
-                _last_snap[0] = snap
-                render_decisions.refresh(snap, filter_select.value)
-                render_mcp_calls.refresh(snap, mcp_filter.value)
+                if snap.get("_changed", True):
+                    _last_snap[0] = snap
+                    render_decisions.refresh(snap, filter_select.value)
+                    render_mcp_calls.refresh(snap, mcp_filter.value)
 
             mcp_filter.on("update:model-value", lambda e: render_mcp_calls.refresh(_last_snap[0], mcp_filter.value))
 
